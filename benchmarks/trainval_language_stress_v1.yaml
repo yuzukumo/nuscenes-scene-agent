@@ -1,0 +1,198 @@
+queries:
+  - id: pedestrian_crossing_crosswalk_step_out
+    description: pedestrian steps into ego lane directly ahead at the crosswalk
+    top_k: 3
+    candidate_pool: 12
+    apply_query_overrides: false
+    tags: [language_stress, vru, crossing, front]
+    query:
+      natural_language: someone steps into ego's lane directly ahead at the crosswalk
+      actors: [pedestrian]
+      positions: [front]
+      behaviors: [crossing]
+      risk_terms: [risky]
+
+  - id: pedestrian_crossing_tight_gap_dart_out
+    description: pedestrian darts out right before ego reaches the crosswalk
+    top_k: 2
+    candidate_pool: 12
+    apply_query_overrides: false
+    tags: [language_stress, vru, crossing, tight_gap]
+    query:
+      natural_language: a pedestrian darts out right before ego reaches the crosswalk
+      actors: [pedestrian]
+      positions: [front]
+      behaviors: [crossing]
+      risk_terms: [risky]
+
+  - id: cyclist_crossing_cuts_across
+    description: bike rider cuts across the path in front of the car
+    top_k: 2
+    candidate_pool: 12
+    apply_query_overrides: false
+    tags: [language_stress, bicycle, crossing]
+    query:
+      natural_language: a bike rider cuts across the path in front of the car
+      actors: [bicycle]
+      positions: [front]
+      behaviors: [crossing]
+      risk_terms: [risky]
+
+  - id: front_vru_uncomfortably_close
+    description: vulnerable road user is uncomfortably close straight ahead
+    top_k: 2
+    candidate_pool: 12
+    apply_query_overrides: false
+    tags: [language_stress, vru, proximity, front]
+    query:
+      natural_language: a vulnerable road user is uncomfortably close straight ahead
+      actors: [pedestrian, bicycle, motorcycle]
+      positions: [front]
+      risk_terms: [risky]
+
+  - id: stopped_lead_vehicle_sitting_in_lane
+    description: lead car is just sitting in ego lane ahead
+    top_k: 3
+    candidate_pool: 12
+    apply_query_overrides: false
+    tags: [language_stress, vehicle, stopped, lane_blocking]
+    query:
+      natural_language: the lead car is just sitting in ego's lane ahead
+      actors: [vehicle]
+      positions: [front]
+      behaviors: [stopped_lead]
+
+  - id: stopped_lead_truck_idling
+    description: truck is idling in front and blocking progress
+    top_k: 2
+    candidate_pool: 12
+    apply_query_overrides: false
+    tags: [language_stress, truck, stopped, lane_blocking]
+    query:
+      natural_language: a truck is idling in front and blocking progress
+      actors: [truck]
+      positions: [front]
+      behaviors: [stopped_lead]
+
+  - id: stopped_lead_bus_dead_ahead
+    description: bus is parked dead ahead and holding ego up
+    top_k: 2
+    candidate_pool: 12
+    apply_query_overrides: false
+    tags: [language_stress, bus, stopped, lane_blocking]
+    query:
+      natural_language: a city bus is parked dead ahead and holding ego up
+      actors: [bus]
+      positions: [front]
+      behaviors: [stopped_lead]
+
+  - id: oncoming_vehicle_same_corridor
+    description: vehicle comes straight at ego in the same corridor
+    top_k: 3
+    candidate_pool: 12
+    apply_query_overrides: false
+    tags: [language_stress, vehicle, oncoming, front]
+    query:
+      natural_language: a vehicle comes straight at ego in the same corridor
+      actors: [vehicle]
+      positions: [front]
+      behaviors: [oncoming]
+      risk_terms: [risky]
+
+  - id: oncoming_truck_bears_down
+    description: opposing truck bears down toward ego
+    top_k: 2
+    candidate_pool: 12
+    apply_query_overrides: false
+    tags: [language_stress, truck, oncoming, front]
+    query:
+      natural_language: an opposing truck bears down toward ego
+      actors: [truck]
+      positions: [front]
+      behaviors: [oncoming]
+      risk_terms: [risky]
+
+  - id: oncoming_bus_opposite_flow
+    description: bus in opposite flow gets uncomfortably close
+    top_k: 2
+    candidate_pool: 12
+    apply_query_overrides: false
+    tags: [language_stress, bus, oncoming, front]
+    query:
+      natural_language: a bus in the opposite flow gets uncomfortably close
+      actors: [bus]
+      positions: [front]
+      behaviors: [oncoming]
+      risk_terms: [risky]
+
+  - id: front_vehicle_dead_ahead_close
+    description: car is extremely close directly ahead
+    top_k: 2
+    candidate_pool: 10
+    apply_query_overrides: false
+    tags: [language_stress, vehicle, proximity, front]
+    query:
+      natural_language: a car is extremely close directly ahead
+      actors: [vehicle]
+      positions: [front]
+      risk_terms: [risky]
+
+  - id: left_vehicle_drivers_side_close
+    description: vehicle is running very close alongside on the driver's side
+    top_k: 2
+    candidate_pool: 10
+    apply_query_overrides: false
+    tags: [language_stress, vehicle, proximity, left]
+    query:
+      natural_language: a vehicle is running very close alongside on the driver's side
+      actors: [vehicle]
+      positions: [left]
+      risk_terms: [risky]
+
+  - id: right_vehicle_passenger_side_close
+    description: car is hugging ego on the passenger side
+    top_k: 2
+    candidate_pool: 10
+    apply_query_overrides: false
+    tags: [language_stress, vehicle, proximity, right]
+    query:
+      natural_language: a car is hugging ego on the passenger side
+      actors: [vehicle]
+      positions: [right]
+      risk_terms: [risky]
+
+  - id: right_side_cut_in_noses_in
+    description: car noses in from the passenger side
+    top_k: 3
+    candidate_pool: 12
+    apply_query_overrides: false
+    tags: [language_stress, vehicle, cutin, right]
+    query:
+      natural_language: a car noses in from the passenger side
+      actors: [vehicle]
+      positions: [right]
+      behaviors: [cut_in]
+
+  - id: left_side_cut_in_merges_over
+    description: vehicle merges over from the driver's side
+    top_k: 2
+    candidate_pool: 12
+    apply_query_overrides: false
+    tags: [language_stress, vehicle, cutin, left]
+    query:
+      natural_language: a vehicle merges over from the driver's side
+      actors: [vehicle]
+      positions: [left]
+      behaviors: [cut_in]
+
+  - id: truck_cut_in_adjacent_right_lane
+    description: truck drifts over from the adjacent right lane into ego path
+    top_k: 2
+    candidate_pool: 12
+    apply_query_overrides: false
+    tags: [language_stress, truck, cutin, right]
+    query:
+      natural_language: a truck drifts over from the adjacent right lane into ego path
+      actors: [truck]
+      positions: [right]
+      behaviors: [cut_in]

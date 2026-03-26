@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nuscenes-scene-agent"
+version = "0.1.0"
+description = "An agentic toolkit for mining, validating, and benchmarking risky scenes in nuScenes."
+readme = "README.md"
+requires-python = ">=3.8"
+license = {file = "LICENSE"}
+keywords = ["nuScenes", "autonomous driving", "scene mining", "risk retrieval", "benchmark generation", "agentic retrieval", "corner case mining"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+  "Topic :: Scientific/Engineering :: Visualization",
+]
+dependencies = [
+  "nuscenes-devkit>=1.1.11",
+  "numpy>=1.22",
+  "pandas>=1.5",
+  "matplotlib>=3.5",
+  "jinja2>=2.10",
+  "PyYAML>=5.3",
+  "shapely>=1.8",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7",
+]
+
+[project.scripts]
+nuscenes-scene-agent = "nusc_scene_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools]
+include-package-data = false

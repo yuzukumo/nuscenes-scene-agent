@@ -1,0 +1,247 @@
+queries:
+  - id: pedestrian_crossing_front
+    description: pedestrian crossing in front of ego lane
+    top_k: 3
+    candidate_pool: 10
+    tags: [vru, crossing, front]
+    query:
+      natural_language: pedestrian crossing in front of ego lane
+      actors: [pedestrian]
+      positions: [front]
+      behaviors: [crossing]
+      map_constraints:
+        prefer_crosswalk: true
+        prefer_walkway: true
+      thresholds:
+        near_distance_m: 25
+        max_ttc_s: 6
+
+  - id: pedestrian_crossing_tight_gap
+    description: pedestrian crossing very close in front of ego
+    top_k: 2
+    candidate_pool: 12
+    tags: [vru, crossing, tight_gap]
+    query:
+      natural_language: pedestrian crossing very close in front of ego
+      actors: [pedestrian]
+      positions: [front]
+      behaviors: [crossing]
+      risk_terms: [risky]
+      map_constraints:
+        prefer_crosswalk: true
+      thresholds:
+        near_distance_m: 15
+        max_ttc_s: 4
+
+  - id: cyclist_crossing_front
+    description: cyclist crossing the ego path in front
+    top_k: 2
+    candidate_pool: 12
+    tags: [vru, bicycle, crossing]
+    query:
+      natural_language: cyclist crossing the ego path in front
+      actors: [bicycle]
+      positions: [front]
+      behaviors: [crossing]
+      map_constraints:
+        prefer_crosswalk: true
+        prefer_walkway: true
+      thresholds:
+        near_distance_m: 22
+        max_ttc_s: 6
+
+  - id: front_vru_close
+    description: close vulnerable road user in front of ego
+    top_k: 2
+    candidate_pool: 10
+    tags: [vru, proximity, front]
+    query:
+      natural_language: close VRU in front of ego
+      actors: [pedestrian, bicycle, motorcycle]
+      positions: [front]
+      thresholds:
+        near_distance_m: 12
+        max_ttc_s: 5
+
+  - id: stopped_lead_vehicle
+    description: stopped lead vehicle blocking ego
+    top_k: 3
+    candidate_pool: 10
+    tags: [vehicle, stopped, lane_blocking]
+    query:
+      natural_language: stopped lead vehicle blocking ego
+      actors: [vehicle]
+      positions: [front]
+      behaviors: [stopped_lead]
+      map_constraints:
+        prefer_same_lane: true
+      thresholds:
+        near_distance_m: 25
+        max_ttc_s: 6
+
+  - id: stopped_lead_truck
+    description: stopped truck blocking ego
+    top_k: 2
+    candidate_pool: 10
+    tags: [truck, stopped, lane_blocking]
+    query:
+      natural_language: stopped truck blocking ego
+      actors: [truck]
+      positions: [front]
+      behaviors: [stopped_lead]
+      map_constraints:
+        prefer_same_lane: true
+      thresholds:
+        near_distance_m: 30
+        max_ttc_s: 6
+
+  - id: stopped_lead_bus
+    description: stopped bus blocking ego
+    top_k: 2
+    candidate_pool: 10
+    tags: [bus, stopped, lane_blocking]
+    query:
+      natural_language: stopped bus blocking ego
+      actors: [bus]
+      positions: [front]
+      behaviors: [stopped_lead]
+      map_constraints:
+        prefer_same_lane: true
+      thresholds:
+        near_distance_m: 30
+        max_ttc_s: 6
+
+  - id: oncoming_close_vehicle
+    description: oncoming vehicle close to ego
+    top_k: 3
+    candidate_pool: 12
+    tags: [vehicle, oncoming, front]
+    query:
+      natural_language: oncoming vehicle close to ego
+      actors: [vehicle]
+      positions: [front]
+      behaviors: [oncoming]
+      map_constraints:
+        prefer_road_lane: true
+      thresholds:
+        near_distance_m: 20
+        max_ttc_s: 5
+
+  - id: oncoming_close_truck
+    description: oncoming truck close to ego
+    top_k: 2
+    candidate_pool: 12
+    tags: [truck, oncoming, front]
+    query:
+      natural_language: oncoming truck close to ego
+      actors: [truck]
+      positions: [front]
+      behaviors: [oncoming]
+      map_constraints:
+        prefer_road_lane: true
+      thresholds:
+        near_distance_m: 24
+        max_ttc_s: 5
+
+  - id: oncoming_close_bus
+    description: oncoming bus close to ego
+    top_k: 2
+    candidate_pool: 12
+    tags: [bus, oncoming, front]
+    query:
+      natural_language: oncoming bus close to ego
+      actors: [bus]
+      positions: [front]
+      behaviors: [oncoming]
+      map_constraints:
+        prefer_road_lane: true
+      thresholds:
+        near_distance_m: 24
+        max_ttc_s: 5
+
+  - id: front_close_vehicle
+    description: close vehicle in front of ego
+    top_k: 2
+    candidate_pool: 10
+    tags: [vehicle, proximity, front]
+    query:
+      natural_language: close vehicle in front of ego
+      actors: [vehicle]
+      positions: [front]
+      thresholds:
+        near_distance_m: 12
+        max_ttc_s: 5
+
+  - id: left_close_vehicle
+    description: close vehicle on the left of ego
+    top_k: 2
+    candidate_pool: 10
+    tags: [vehicle, proximity, left]
+    query:
+      natural_language: close vehicle on the left of ego
+      actors: [vehicle]
+      positions: [left]
+      thresholds:
+        near_distance_m: 10
+        max_ttc_s: 6
+
+  - id: right_close_vehicle
+    description: close vehicle on the right of ego
+    top_k: 2
+    candidate_pool: 10
+    tags: [vehicle, proximity, right]
+    query:
+      natural_language: close vehicle on the right of ego
+      actors: [vehicle]
+      positions: [right]
+      thresholds:
+        near_distance_m: 10
+        max_ttc_s: 6
+
+  - id: right_side_cut_in
+    description: vehicle cuts in from right side
+    top_k: 3
+    candidate_pool: 12
+    tags: [vehicle, cutin, right]
+    query:
+      natural_language: vehicle cuts in from right side
+      actors: [vehicle]
+      positions: [right]
+      behaviors: [cut_in]
+      map_constraints:
+        prefer_lane_merge: true
+      thresholds:
+        near_distance_m: 25
+        max_ttc_s: 6
+
+  - id: left_side_cut_in
+    description: vehicle cuts in from left side
+    top_k: 2
+    candidate_pool: 12
+    tags: [vehicle, cutin, left]
+    query:
+      natural_language: vehicle cuts in from left side
+      actors: [vehicle]
+      positions: [left]
+      behaviors: [cut_in]
+      map_constraints:
+        prefer_lane_merge: true
+      thresholds:
+        near_distance_m: 25
+        max_ttc_s: 6
+
+  - id: truck_cut_in_from_right
+    description: truck cuts in from right side
+    top_k: 2
+    candidate_pool: 12
+    tags: [truck, cutin, right]
+    query:
+      natural_language: truck cuts in from right side
+      actors: [truck]
+      positions: [right]
+      behaviors: [cut_in]
+      map_constraints:
+        prefer_lane_merge: true
+      thresholds:
+        near_distance_m: 28
+        max_ttc_s: 6
