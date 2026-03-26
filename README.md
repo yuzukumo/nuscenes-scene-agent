@@ -12,9 +12,9 @@ Turn natural-language risk descriptions into validated `nuScenes` cases, evidenc
   <img src="./assets/pipeline_overview.png" alt="Pipeline overview" width="100%">
 </p>
 
-`nuScenes Scene Mining Agent` is an agentic toolkit for the part of autonomous driving work that usually stays manual and messy: mining risky scenes, validating them with explicit evidence, and turning them into reusable evaluation assets.
+`nuScenes Scene Mining Agent` is an agentic toolkit for risky-scene retrieval, validation, and benchmark generation on `nuScenes`.
 
-It is intentionally not a driving policy, not an end-to-end training stack, and not a CARLA-heavy simulator project. The focus is the data-centric loop:
+It is not a driving policy, an end-to-end training stack, or a simulator-first project. The focus is the data workflow:
 
 1. describe a risky scenario in natural language
 2. translate it into structured retrieval hypotheses
@@ -22,12 +22,12 @@ It is intentionally not a driving policy, not an end-to-end training stack, and 
 4. validate candidates with geometry, motion, TTC, and map context
 5. export evidence figures, reports, case libraries, and benchmark summaries
 
-## Why This Repo Is Useful
+## Scope
 
 - Mine corner cases from `nuScenes` without manually scanning scenes one by one.
 - Turn open-ended safety language into a reproducible retrieval workflow.
 - Keep the system interpretable with deterministic validation instead of black-box matching alone.
-- Build benchmark suites and failure-analysis artifacts that are useful for research demos, interviews, and portfolio projects.
+- Build benchmark suites and failure-analysis artifacts for research, evaluation, and portfolio presentation.
 - Compare `rule_only`, `llm_planner`, and `hybrid_agent` on the same risky-scene benchmark.
 
 ## Showcase
@@ -36,7 +36,7 @@ It is intentionally not a driving policy, not an end-to-end training stack, and 
   <img src="./assets/readme_showcase.png" alt="Risky scene mining showcase" width="100%">
 </p>
 
-Representative local outputs already produced by the pipeline include:
+Representative outputs produced by the pipeline include:
 
 | Scenario family | What the export shows |
 | --- | --- |
@@ -45,11 +45,11 @@ Representative local outputs already produced by the pipeline include:
 | Oncoming vehicle | opposite-direction conflict with map-aware validation |
 | Right-side cut-in | lateral merge into ego path with temporal evidence |
 
-The default output surface is `BEV evidence PNG + Markdown/HTML reports`. No ready-made `mp4` video files are currently committed.
+The reporting pipeline exports `BEV evidence PNG` together with `Markdown` and `HTML` reports.
 
-## Why It Counts As An Agent
+## Agent Design
 
-The "agent" here is an orchestration agent, not a driving agent.
+This repository implements an orchestration agent rather than a driving agent.
 
 It combines:
 
@@ -59,7 +59,7 @@ It combines:
 - deterministic validators for geometry, motion, TTC, lane relation, and crosswalk context
 - a reporting layer that exports evidence images, case reports, case libraries, and benchmark summaries
 
-The core design choice is hybridization: `LLM for intent understanding and ranking`, `deterministic code for evidence, filtering, and reproducibility`.
+The core design is hybrid: `LLM` for intent understanding and ranking, `deterministic code` for evidence, filtering, and reproducibility.
 
 ## Data Policy
 
@@ -71,13 +71,13 @@ This repository does **not** include:
 - local `SQLite` artifacts
 - generated benchmark outputs
 
-Those directories are intentionally excluded from version control through `.gitignore`, so the repo stays lightweight and GitHub-friendly.
+These directories are excluded from version control through `.gitignore` so the repository remains lightweight.
 
 Download links are listed here:
 
 - [Dataset Downloads](docs/dataset_downloads.md)
 
-If you want the shortest path:
+Minimal required files:
 
 - mini: `v1.0-mini.tgz`
 - maps: `nuScenes-map-expansion-v1.3.zip`
@@ -126,7 +126,7 @@ Check readiness:
 python -m nusc_scene_agent inspect-archives --workspace .
 ```
 
-### 3. Run the smallest end-to-end demo
+### 3. Run a minimal end-to-end demo
 
 Prepare `v1.0-mini`:
 
@@ -155,7 +155,7 @@ python -m nusc_scene_agent query \
   --query-mode rule
 ```
 
-### 4. Scale to trainval
+### 4. Run on trainval
 
 Prepare `v1.0-trainval + map expansion`:
 
@@ -206,7 +206,7 @@ export NUSC_SCENE_AGENT_LLM_API_KEY="your-key"
 export NUSC_SCENE_AGENT_LLM_MODEL="your-model"
 ```
 
-The runtime uses an OpenAI-compatible `Responses API` flow and keeps retrieval and validation runnable even if planning or reranking fails.
+The runtime uses an OpenAI-compatible `Responses API` flow and keeps retrieval and validation available even if planning or reranking fails.
 
 ## Benchmark Snapshot
 
@@ -232,7 +232,7 @@ Current local snapshot on `v1.0-trainval + map expansion`:
 | `llm_planner` | `15/16` | `86.29` |
 | `hybrid_agent` | `16/16` | `91.34` |
 
-Additional signal:
+Additional observations:
 
 - planner signal divergence: `12 / 16`
 - hybrid arbitration improves robustness over naive planner-only behavior
@@ -254,7 +254,7 @@ tests/                   unit tests for retrieval, validation, reporting, and be
 environment.yml          conda-first environment
 ```
 
-Large local-only directories are intentionally not tracked:
+Large local directories are intentionally not tracked:
 
 - `archives/`
 - `data/`
@@ -273,4 +273,4 @@ The CLI currently supports:
 - `benchmark-compare`
 - `demo`
 
-This gives the repo a practical workflow from archive inspection to dataset preparation, indexing, scene retrieval, validation, and benchmark export.
+These commands cover archive inspection, dataset preparation, indexing, retrieval, validation, and benchmark export.
