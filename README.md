@@ -208,6 +208,29 @@ export NUSC_SCENE_AGENT_LLM_MODEL="your-model"
 
 The runtime uses an OpenAI-compatible `Responses API` flow and keeps retrieval and validation available even if planning or reranking fails.
 
+## Optional LangGraph Workflow
+
+The repository also includes a thin `LangGraph` orchestration layer on top of the existing planner, retrieval, validation, and reporting modules.
+
+Install the optional dependency:
+
+```bash
+pip install -e ".[agent]"
+```
+
+Run a query through `LangGraph`:
+
+```bash
+python -m nusc_scene_agent langgraph-query \
+  "pedestrian crossing very close in front of ego lane and risky" \
+  --db artifacts/index/v1.0-mini.sqlite \
+  --output outputs/langgraph_query \
+  --query-mode hybrid \
+  --rerank-mode llm
+```
+
+This path writes the standard report artifacts together with `langgraph_trace.json` for framework-level orchestration tracing.
+
 ## Benchmark Snapshot
 
 Current local snapshot on `v1.0-trainval + map expansion`:
@@ -269,6 +292,7 @@ The CLI currently supports:
 - `prepare-data`
 - `build-index`
 - `query`
+- `langgraph-query`
 - `benchmark`
 - `benchmark-compare`
 - `demo`

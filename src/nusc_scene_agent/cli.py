@@ -16,6 +16,7 @@ from nusc_scene_agent.case_library import build_case_library, write_case_library
 from nusc_scene_agent.benchmark_schema import load_benchmark_config
 from nusc_scene_agent.data_utils import DEFAULT_DATAROOT, PREPARE_PROFILES, discover_archive_inventory, prepare_data
 from nusc_scene_agent.indexing import build_index
+from nusc_scene_agent.langgraph_agent import run_langgraph_query_pipeline
 from nusc_scene_agent.llm_client import DEFAULT_TIMEOUT_S, LLMConfig
 from nusc_scene_agent.pipeline import run_query_pipeline
 
@@ -76,6 +77,17 @@ def _build_parser() -> argparse.ArgumentParser:
     query_parser.add_argument("--top-k", type=int, default=5)
     query_parser.add_argument("--candidate-pool", type=int, default=12)
     _add_llm_args(query_parser)
+
+    langgraph_query_parser = subparsers.add_parser(
+        "langgraph-query",
+        help="Run one natural-language risk query through a LangGraph orchestration layer.",
+    )
+    langgraph_query_parser.add_argument("text", help="Natural-language risk description.")
+    langgraph_query_parser.add_argument("--db", default=str(DEFAULT_DB))
+    langgraph_query_parser.add_argument("--output", default="outputs/langgraph_query")
+    langgraph_query_parser.add_argument("--top-k", type=int, default=5)
+    langgraph_query_parser.add_argument("--candidate-pool", type=int, default=12)
+    _add_llm_args(langgraph_query_parser)
 
     benchmark_parser = subparsers.add_parser("benchmark", help="Run a YAML benchmark query suite.")
     benchmark_parser.add_argument("--config", default=str(DEFAULT_BENCHMARK))
@@ -201,6 +213,22 @@ def main() -> None:
             llm_config=llm_config,
         )
         print("Query output:", result["query_dir"])
+        print("Candidates:", result["candidate_count"], "Selected:", result["selected_count"])
+        return
+
+    if args.command == "langgraph-query":
+        llm_config = _resolve_llm_config(args)
+        result = run_langgraph_query_pipeline(
+            db_path=Path(args.db),
+            query_text=args.text,
+            output_root=Path(args.output),
+            top_k=args.top_k,
+            candidate_pool=args.candidate_pool,
+            query_mode=args.query_mode,
+            rerank_mode=args.rerank_mode,
+            llm_config=llm_config,
+        )
+        print("LangGraph query output:", result["query_dir"])
         print("Candidates:", result["candidate_count"], "Selected:", result["selected_count"])
         return
 

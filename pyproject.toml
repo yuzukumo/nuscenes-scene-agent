@@ -33,6 +33,9 @@ dependencies = [
 dev = [
   "pytest>=7",
 ]
+agent = [
+  "langgraph>=1.1,<2; python_version >= '3.10'",
+]
 
 [project.scripts]
 nuscenes-scene-agent = "nusc_scene_agent.cli:main"
