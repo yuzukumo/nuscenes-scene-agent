@@ -3,9 +3,11 @@ import unittest
 from pathlib import Path
 
 from nusc_scene_agent.benchmark_exports import (
+    build_counterfactual_group_summary,
     build_hard_case_taxonomy,
     build_hard_cases,
     build_query_splits,
+    build_scenario_group_summary,
     write_benchmark_exports,
 )
 from nusc_scene_agent.benchmark_schema import BenchmarkQuerySpec
@@ -144,8 +146,77 @@ class BenchmarkExportsTest(unittest.TestCase):
         self.assertEqual(len(taxonomy["group_distribution"]) >= 1, True)
         self.assertEqual(len(taxonomy["label_distribution"]) >= 1, True)
 
+    def test_build_counterfactual_group_summary(self) -> None:
+        case = make_case("ped crossing", "crossing", "pedestrian", "sample-a", "inst-a", 88.0, True)
+        results = [
+            {
+                "id": "positive_query",
+                "query": case.query,
+                "query_spec": BenchmarkQuerySpec(
+                    id="positive_query",
+                    description="positive",
+                    natural_language="ped crossing",
+                    actors=["pedestrian"],
+                    behaviors=["crossing"],
+                    reference_case_keys=["sample-a:inst-a"],
+                    expect_match=True,
+                    benchmark_group="anchor_a",
+                    variant_type="positive_canonical",
+                ),
+                "selected_cases": [case],
+            }
+        ]
+        summary = build_counterfactual_group_summary(results)
+        self.assertEqual(summary["overview"]["group_count"], 1)
+        self.assertEqual(summary["overview"]["success_at_1_count"], 1)
+
+    def test_build_scenario_group_summary(self) -> None:
+        case = make_case("ped crossing", "crossing", "pedestrian", "sample-a", "inst-a", 88.0, True)
+        case.event_localization = {
+            "primary_behavior": "crossing",
+            "start_sample_idx": 6,
+            "end_sample_idx": 8,
+            "peak_sample_idx": 7,
+            "duration_s": 1.0,
+        }
+        results = [
+            {
+                "id": "scenario_query",
+                "query": case.query,
+                "query_spec": BenchmarkQuerySpec(
+                    id="scenario_query",
+                    description="scenario",
+                    natural_language="ped crossing",
+                    tags=["scenario_mining"],
+                    actors=["pedestrian"],
+                    behaviors=["crossing"],
+                    reference_case_keys=["sample-a:inst-a"],
+                    reference_scene_names=["scene-a"],
+                    reference_instance_tokens=["inst-a"],
+                    reference_event_sample_range=[6, 8],
+                    reference_peak_sample_idx=7,
+                    expect_match=True,
+                    benchmark_group="scenario_a",
+                    variant_type="scenario_canonical",
+                ),
+                "selected_cases": [case],
+            }
+        ]
+        summary = build_scenario_group_summary(results)
+        self.assertEqual(summary["overview"]["group_count"], 1)
+        self.assertEqual(summary["overview"]["scene_success_at_1_count"], 1)
+        self.assertEqual(summary["overview"]["reference_success_at_1_count"], 1)
+        self.assertAlmostEqual(summary["overview"]["mean_event_iou"], 1.0)
+
     def test_write_benchmark_exports_emits_expected_files(self) -> None:
         case = make_case("left cut in", "cut_in", "vehicle", "sample-a", "inst-a", 82.0, False)
+        case.event_localization = {
+            "primary_behavior": "cut_in",
+            "start_sample_idx": 6,
+            "end_sample_idx": 8,
+            "peak_sample_idx": 7,
+            "duration_s": 1.0,
+        }
         results = [
             {
                 "id": "left_cut",
@@ -158,6 +229,14 @@ class BenchmarkExportsTest(unittest.TestCase):
                     actors=["vehicle"],
                     positions=["left"],
                     behaviors=["cut_in"],
+                    reference_scene_names=["scene-a"],
+                    reference_instance_tokens=["inst-a"],
+                    reference_event_sample_range=[6, 8],
+                    reference_peak_sample_idx=7,
+                    reference_case_keys=["sample-a:inst-a"],
+                    expect_match=True,
+                    benchmark_group="anchor_a",
+                    variant_type="scenario_canonical",
                 ),
                 "selected_cases": [case],
             }
@@ -174,6 +253,10 @@ class BenchmarkExportsTest(unittest.TestCase):
             self.assertTrue((root / "hard_cases_summary.md").exists())
             self.assertTrue((root / "hard_case_taxonomy.json").exists())
             self.assertTrue((root / "hard_case_taxonomy_summary.md").exists())
+            self.assertTrue((root / "counterfactual_group_summary.json").exists())
+            self.assertTrue((root / "counterfactual_group_summary.md").exists())
+            self.assertTrue((root / "scenario_group_summary.json").exists())
+            self.assertTrue((root / "scenario_group_summary.md").exists())
 
 
 if __name__ == "__main__":

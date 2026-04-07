@@ -59,6 +59,14 @@ class BenchmarkQuerySpec:
     risk_terms: List[str] = field(default_factory=list)
     map_constraints: Dict[str, object] = field(default_factory=dict)
     thresholds: Dict[str, float] = field(default_factory=dict)
+    reference_case_keys: List[str] = field(default_factory=list)
+    reference_scene_names: List[str] = field(default_factory=list)
+    reference_instance_tokens: List[str] = field(default_factory=list)
+    reference_event_sample_range: List[int] = field(default_factory=list)
+    reference_peak_sample_idx: Optional[int] = None
+    expect_match: Optional[bool] = None
+    benchmark_group: str = ""
+    variant_type: str = ""
 
     @classmethod
     def from_dict(cls, payload: Dict[str, object]) -> "BenchmarkQuerySpec":
@@ -91,6 +99,39 @@ class BenchmarkQuerySpec:
             risk_terms=_unique(query_payload.get("risk_terms") or payload.get("risk_terms") or []),
             map_constraints=dict(query_payload.get("map_constraints") or payload.get("map_constraints") or {}),
             thresholds=dict(query_payload.get("thresholds") or payload.get("thresholds") or {}),
+            reference_case_keys=_unique(
+                payload.get("reference_case_keys") or query_payload.get("reference_case_keys") or []
+            ),
+            reference_scene_names=_unique(
+                payload.get("reference_scene_names") or query_payload.get("reference_scene_names") or []
+            ),
+            reference_instance_tokens=_unique(
+                payload.get("reference_instance_tokens") or query_payload.get("reference_instance_tokens") or []
+            ),
+            reference_event_sample_range=[
+                int(item)
+                for item in (
+                    payload.get("reference_event_sample_range")
+                    or query_payload.get("reference_event_sample_range")
+                    or []
+                )
+            ][:2],
+            reference_peak_sample_idx=(
+                int(payload["reference_peak_sample_idx"])
+                if payload.get("reference_peak_sample_idx") is not None
+                else int(query_payload["reference_peak_sample_idx"])
+                if query_payload.get("reference_peak_sample_idx") is not None
+                else None
+            ),
+            expect_match=(
+                bool(payload.get("expect_match"))
+                if payload.get("expect_match") is not None
+                else bool(query_payload.get("expect_match"))
+                if query_payload.get("expect_match") is not None
+                else None
+            ),
+            benchmark_group=str(payload.get("benchmark_group") or query_payload.get("benchmark_group") or ""),
+            variant_type=str(payload.get("variant_type") or query_payload.get("variant_type") or ""),
         )
 
 

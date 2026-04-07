@@ -55,6 +55,14 @@ def make_case(
         ego_window=None,
         map_context={"available": True, "actor_on_crosswalk_any": True},
         map_geometries={},
+        actor_grounding={"track_start_sample_idx": 8, "track_end_sample_idx": 16, "track_frame_count": 9},
+        event_localization={
+            "primary_behavior": "crossing",
+            "start_sample_idx": 10,
+            "end_sample_idx": 14,
+            "peak_sample_idx": 12,
+            "duration_s": 2.0,
+        },
         figure_path="/tmp/figure-" + figure_suffix + ".png",
         report_dir="/tmp/report-" + figure_suffix,
     )
@@ -80,6 +88,8 @@ class CaseLibraryTest(unittest.TestCase):
         self.assertEqual(merged["source_query_ids"], ["q_a", "q_b"])
         self.assertEqual(merged["validation_score"], 92.0)
         self.assertEqual(merged["selected_hypothesis"], "rule")
+        self.assertEqual(merged["event_peak_sample_idx"], 12)
+        self.assertEqual(merged["actor_track_frame_count"], 9)
 
 
 if __name__ == "__main__":

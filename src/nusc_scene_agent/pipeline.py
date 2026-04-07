@@ -12,7 +12,7 @@ from nusc_scene_agent.llm_reranker import rerank_candidates_with_llm
 from nusc_scene_agent.models import ParsedQuery, ValidatedCase
 from nusc_scene_agent.reporting import slugify, write_query_report
 from nusc_scene_agent.retrieval import retrieve_candidates
-from nusc_scene_agent.validation import validate_candidate
+from nusc_scene_agent.validation import ValidationConfig, validate_candidate
 
 
 def _select_diverse_cases(validated: Sequence[ValidatedCase], top_k: int) -> List[ValidatedCase]:
@@ -113,7 +113,9 @@ def _evaluate_query_hypothesis(
     candidate_pool: int,
     rerank_mode: str,
     llm_config: Optional[LLMConfig],
+    validation_config: Optional[ValidationConfig] = None,
 ) -> Dict[str, object]:
+    validation_config = validation_config or ValidationConfig()
     candidates = retrieve_candidates(conn, query=query, top_k=top_k, candidate_pool=max(candidate_pool, top_k))
     if rerank_mode == "llm" and llm_config is not None and candidates:
         try:
@@ -121,7 +123,14 @@ def _evaluate_query_hypothesis(
         except Exception:  # noqa: BLE001
             pass
     validated: List[ValidatedCase] = [
-        validate_candidate(conn, query, candidate, include_map_geometries=False) for candidate in candidates
+        validate_candidate(
+            conn,
+            query,
+            candidate,
+            include_map_geometries=False,
+            validation_config=validation_config,
+        )
+        for candidate in candidates
     ]
     validated.sort(key=lambda item: (item.passed, item.validation_score), reverse=True)
     return {
@@ -150,6 +159,7 @@ def run_query_pipeline(
     query_mode: str = "rule",
     rerank_mode: str = "none",
     llm_config: Optional[LLMConfig] = None,
+    validation_config: Optional[ValidationConfig] = None,
 ) -> Dict[str, object]:
     db_path = db_path.resolve()
     if not db_path.exists():
@@ -158,6 +168,7 @@ def run_query_pipeline(
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     hypothesis_results: List[Dict[str, object]] = []
+    validation_config = validation_config or ValidationConfig()
 
     if query_mode == "hybrid" and llm_config is not None:
         hypotheses = resolve_hybrid_queries(query_text, llm_config)
@@ -171,6 +182,7 @@ def run_query_pipeline(
                 candidate_pool=candidate_pool,
                 rerank_mode=rerank_mode,
                 llm_config=llm_config,
+                validation_config=validation_config,
             )
             for query in hypotheses
         ]
@@ -194,13 +206,23 @@ def run_query_pipeline(
             candidate_pool=candidate_pool,
             rerank_mode=rerank_mode,
             llm_config=llm_config,
+            validation_config=validation_config,
         )
         candidates = list(evaluated["candidates"])
         validated = list(evaluated["validated"])
         agent_trace = _build_agent_trace(query_mode, [evaluated], query)
 
     selected_candidates = [case.candidate for case in _select_diverse_cases(validated, top_k=top_k)]
-    selected = [validate_candidate(conn, query, candidate, include_map_geometries=True) for candidate in selected_candidates]
+    selected = [
+        validate_candidate(
+            conn,
+            query,
+            candidate,
+            include_map_geometries=True,
+            validation_config=validation_config,
+        )
+        for candidate in selected_candidates
+    ]
     conn.close()
 
     query_dir = output_root.resolve() / slugify(query_text)

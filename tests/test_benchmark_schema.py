@@ -40,6 +40,10 @@ queries:
             self.assertEqual(spec.candidate_pool, 8)
             self.assertIn("pedestrian", spec.actors)
             self.assertTrue(spec.apply_query_overrides)
+            self.assertEqual(spec.reference_case_keys, [])
+            self.assertEqual(spec.reference_scene_names, [])
+            self.assertEqual(spec.reference_instance_tokens, [])
+            self.assertIsNone(spec.expect_match)
 
             parsed = parse_query(spec.natural_language)
             merged = apply_benchmark_spec(parsed, spec)
@@ -77,6 +81,40 @@ queries:
             self.assertEqual(merged.category_groups, parsed.category_groups)
             self.assertEqual(merged.positions, parsed.positions)
             self.assertEqual(merged.behaviors, parsed.behaviors)
+
+    def test_load_reference_case_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "queries.yaml"
+            config_path.write_text(
+                """
+queries:
+  - id: contrastive_case
+    description: contrastive reference query
+    reference_case_keys: [sample-a:instance-a]
+    reference_scene_names: [scene-0001]
+    reference_instance_tokens: [instance-a]
+    reference_event_sample_range: [11, 15]
+    reference_peak_sample_idx: 13
+    expect_match: true
+    benchmark_group: anchor_sample_a
+    variant_type: positive_canonical
+    query:
+      natural_language: pedestrian crossing in front of ego lane
+      actors: [pedestrian]
+      behaviors: [crossing]
+""",
+                encoding="utf-8",
+            )
+
+            spec = load_benchmark_config(config_path)[0]
+            self.assertEqual(spec.reference_case_keys, ["sample-a:instance-a"])
+            self.assertEqual(spec.reference_scene_names, ["scene-0001"])
+            self.assertEqual(spec.reference_instance_tokens, ["instance-a"])
+            self.assertEqual(spec.reference_event_sample_range, [11, 15])
+            self.assertEqual(spec.reference_peak_sample_idx, 13)
+            self.assertTrue(spec.expect_match)
+            self.assertEqual(spec.benchmark_group, "anchor_sample_a")
+            self.assertEqual(spec.variant_type, "positive_canonical")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import asdict, dataclass
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -8,6 +9,17 @@ import pandas as pd
 
 from nusc_scene_agent.map_context import build_case_map_context
 from nusc_scene_agent.models import ParsedQuery, RetrievalCandidate, ValidatedCase
+
+
+@dataclass(frozen=True)
+class ValidationConfig:
+    name: str = "full_system"
+    enable_map_context: bool = True
+    enable_event_localization: bool = True
+    enable_actor_grounding: bool = True
+
+    def to_dict(self) -> Dict[str, object]:
+        return asdict(self)
 
 
 def detect_crossing_like(track: pd.DataFrame) -> bool:
@@ -129,6 +141,132 @@ def detect_stopped_lead_like(track: pd.DataFrame) -> bool:
     return front_corridor and stationary_frames >= max(2, len(ordered) // 2)
 
 
+def _primary_behavior(query: ParsedQuery) -> str:
+    if query.behaviors:
+        return str(query.behaviors[0])
+    return "proximity"
+
+
+def _event_mask(track: pd.DataFrame, query: ParsedQuery) -> np.ndarray:
+    ordered = track.sort_values("sample_idx")
+    x_values = ordered["x_ego"].to_numpy(dtype=float)
+    y_values = ordered["y_ego"].to_numpy(dtype=float)
+    distance = ordered["distance"].to_numpy(dtype=float)
+    rel_vx = ordered["rel_vx"].to_numpy(dtype=float)
+    speed = ordered["speed"].to_numpy(dtype=float)
+    heading_delta = ordered["heading_delta"].to_numpy(dtype=float)
+
+    behavior = _primary_behavior(query)
+    if behavior == "crossing":
+        return ((x_values >= -6.0) & (x_values <= 18.0) & (np.abs(y_values) <= 8.0)) | (
+            np.abs(x_values) <= 2.5
+        )
+    if behavior == "cut_in":
+        return (x_values >= -6.0) & (x_values <= 24.0) & (np.abs(y_values) <= 4.5)
+    if behavior == "oncoming":
+        heading_gap = np.abs(np.pi - np.abs(heading_delta))
+        return (x_values >= 0.0) & (rel_vx < 0.0) & (heading_gap <= 1.1)
+    if behavior == "stopped_lead":
+        return (x_values >= 0.0) & (x_values <= 25.0) & (np.abs(y_values) <= 3.5) & (speed <= 1.0)
+    return distance <= float(query.near_distance_m)
+
+
+def _peak_index(track: pd.DataFrame) -> int:
+    ordered = track.sort_values("sample_idx").reset_index(drop=True)
+    if ordered.empty:
+        return -1
+    ttc = ordered["ttc"].replace([np.inf, -np.inf], np.nan)
+    if ttc.notna().any():
+        return int(ttc.astype(float).idxmin())
+    return int(ordered["distance"].astype(float).idxmin())
+
+
+def _contiguous_segments(mask: np.ndarray) -> List[Tuple[int, int]]:
+    if len(mask) == 0:
+        return []
+    segments: List[Tuple[int, int]] = []
+    start = None
+    for idx, value in enumerate(mask):
+        if value and start is None:
+            start = idx
+        if start is not None and (idx == len(mask) - 1 or not mask[idx + 1]):
+            segments.append((start, idx))
+            start = None
+    return segments
+
+
+def localize_event(track: pd.DataFrame, query: ParsedQuery, candidate: RetrievalCandidate) -> Dict[str, object]:
+    ordered = track.sort_values("sample_idx").reset_index(drop=True)
+    if ordered.empty:
+        return {}
+
+    mask = _event_mask(ordered, query)
+    peak_idx = _peak_index(ordered)
+    if peak_idx < 0:
+        return {}
+
+    segments = _contiguous_segments(mask)
+    selected_segment = None
+    for start, end in segments:
+        if start <= peak_idx <= end:
+            selected_segment = (start, end)
+            break
+    if selected_segment is None:
+        selected_segment = (max(0, peak_idx - 1), min(len(ordered) - 1, peak_idx + 1))
+
+    start_idx, end_idx = selected_segment
+    peak_row = ordered.iloc[peak_idx]
+    start_row = ordered.iloc[start_idx]
+    end_row = ordered.iloc[end_idx]
+
+    start_sample_idx = int(start_row["sample_idx"])
+    end_sample_idx = int(end_row["sample_idx"])
+    peak_sample_idx = int(peak_row["sample_idx"])
+    start_t_sec = float(start_row["t_sec"]) if "t_sec" in ordered.columns else 0.0
+    end_t_sec = float(end_row["t_sec"]) if "t_sec" in ordered.columns else 0.0
+    peak_t_sec = float(peak_row["t_sec"]) if "t_sec" in ordered.columns else 0.0
+
+    return {
+        "primary_behavior": _primary_behavior(query),
+        "start_sample_idx": start_sample_idx,
+        "end_sample_idx": end_sample_idx,
+        "peak_sample_idx": peak_sample_idx,
+        "anchor_sample_idx": int(candidate.sample_idx),
+        "start_t_sec": round(start_t_sec, 3),
+        "end_t_sec": round(end_t_sec, 3),
+        "peak_t_sec": round(peak_t_sec, 3),
+        "duration_s": round(max(0.0, end_t_sec - start_t_sec), 3),
+        "frame_count": int(end_idx - start_idx + 1),
+        "anchor_within_window": bool(start_sample_idx <= int(candidate.sample_idx) <= end_sample_idx),
+        "peak_distance_m": round(float(peak_row["distance"]), 3),
+        "peak_ttc_s": (
+            None
+            if pd.isna(peak_row["ttc"]) or not np.isfinite(float(peak_row["ttc"]))
+            else round(float(peak_row["ttc"]), 3)
+        ),
+    }
+
+
+def build_actor_grounding(track: pd.DataFrame, candidate: RetrievalCandidate, query: ParsedQuery) -> Dict[str, object]:
+    ordered = track.sort_values("sample_idx").reset_index(drop=True)
+    if ordered.empty:
+        return {}
+    return {
+        "role": "primary_actor",
+        "instance_token": candidate.instance_token,
+        "category_name": candidate.category_name,
+        "category_group": candidate.category_group,
+        "anchor_sample_token": candidate.sample_token,
+        "anchor_sample_idx": int(candidate.sample_idx),
+        "track_start_sample_idx": int(ordered.iloc[0]["sample_idx"]),
+        "track_end_sample_idx": int(ordered.iloc[-1]["sample_idx"]),
+        "track_frame_count": int(len(ordered)),
+        "grounded_positions": list(query.positions),
+        "grounded_behaviors": list(query.behaviors),
+        "grounded_risk_terms": list(query.risk_terms),
+    }
+
+
 def _map_behavior_score(query: ParsedQuery, map_context: Dict[str, object]) -> float:
     if not map_context.get("available"):
         return 0.0
@@ -223,7 +361,9 @@ def validate_candidate(
     candidate: RetrievalCandidate,
     include_map_geometries: bool = True,
     window_radius: int = 4,
+    validation_config: ValidationConfig | None = None,
 ) -> ValidatedCase:
+    validation_config = validation_config or ValidationConfig()
     timeline, context_agents, ego_window = _load_validation_window(conn, candidate, window_radius)
     if timeline.empty:
         return ValidatedCase(
@@ -237,6 +377,8 @@ def validate_candidate(
             timeline=timeline,
             context_agents=context_agents,
             ego_window=ego_window,
+            actor_grounding={},
+            event_localization={},
         )
 
     anchor_time = float(
@@ -244,14 +386,17 @@ def validate_candidate(
     )
     timeline = timeline.copy()
     timeline["t_sec"] = (timeline["timestamp_us"].astype(float) - anchor_time) / 1_000_000.0
-    map_context, map_geometries = build_case_map_context(
-        conn,
-        candidate,
-        timeline,
-        ego_window,
-        query_behaviors=query.behaviors,
-        include_patch_geometries=include_map_geometries,
-    )
+    if validation_config.enable_map_context:
+        map_context, map_geometries = build_case_map_context(
+            conn,
+            candidate,
+            timeline,
+            ego_window,
+            query_behaviors=query.behaviors,
+            include_patch_geometries=include_map_geometries,
+        )
+    else:
+        map_context, map_geometries = {"available": False, "reason": "ablation:no_map_context"}, {}
 
     behavior_matches: Dict[str, bool] = {}
     if "crossing" in query.behaviors:
@@ -306,6 +451,8 @@ def validate_candidate(
                 for name, matched in sorted(behavior_matches.items())
             ]
         )
+    if not validation_config.enable_map_context:
+        notes.append("Map context: ablated")
     if map_context.get("available"):
         notes.append("Map ego lane: {0}".format("yes" if map_context.get("ego_in_lane_anchor") else "no"))
         if "crossing" in query.behaviors:
@@ -333,7 +480,37 @@ def validate_candidate(
         "actor_on_walkway_any": bool(map_context.get("actor_on_walkway_any")),
         "actor_uses_ego_lane_any": bool(map_context.get("actor_uses_ego_lane_any")),
         "shares_lane_at_anchor": bool(map_context.get("shares_lane_at_anchor")),
+        "validation_profile": str(validation_config.name),
+        "map_context_enabled": bool(validation_config.enable_map_context),
+        "event_localization_enabled": bool(validation_config.enable_event_localization),
+        "actor_grounding_enabled": bool(validation_config.enable_actor_grounding),
     }
+    event_localization = (
+        localize_event(timeline, query, candidate) if validation_config.enable_event_localization else {}
+    )
+    actor_grounding = (
+        build_actor_grounding(timeline, candidate, query) if validation_config.enable_actor_grounding else {}
+    )
+    if event_localization:
+        evidence.update(
+            {
+                "event_start_sample_idx": int(event_localization["start_sample_idx"]),
+                "event_end_sample_idx": int(event_localization["end_sample_idx"]),
+                "event_peak_sample_idx": int(event_localization["peak_sample_idx"]),
+                "event_duration_s": float(event_localization["duration_s"]),
+            }
+        )
+        notes.append(
+            "Event window: sample {0} to {1} (peak {2})".format(
+                event_localization["start_sample_idx"],
+                event_localization["end_sample_idx"],
+                event_localization["peak_sample_idx"],
+            )
+        )
+    elif not validation_config.enable_event_localization:
+        notes.append("Event localization: ablated")
+    if not validation_config.enable_actor_grounding:
+        notes.append("Actor grounding: ablated")
 
     return ValidatedCase(
         query=query,
@@ -348,4 +525,6 @@ def validate_candidate(
         ego_window=ego_window,
         map_context=map_context,
         map_geometries=map_geometries,
+        actor_grounding=actor_grounding,
+        event_localization=event_localization,
     )

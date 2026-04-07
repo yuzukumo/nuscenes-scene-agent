@@ -10,15 +10,21 @@ from nusc_scene_agent.benchmark_comparison import (
     default_benchmark_profiles,
     write_benchmark_comparison,
 )
+from nusc_scene_agent.ablation_study import default_ablation_profiles, write_ablation_manifest
+from nusc_scene_agent.case_library_enrichment import enrich_case_library
+from nusc_scene_agent.counterfactual_benchmark import generate_counterfactual_benchmark_from_case_library
 from nusc_scene_agent.benchmark_exports import write_benchmark_exports
 from nusc_scene_agent.benchmark_metrics import build_benchmark_metrics, write_benchmark_metrics
 from nusc_scene_agent.case_library import build_case_library, write_case_library
 from nusc_scene_agent.benchmark_schema import load_benchmark_config
 from nusc_scene_agent.data_utils import DEFAULT_DATAROOT, PREPARE_PROFILES, discover_archive_inventory, prepare_data
+from nusc_scene_agent.gallery import build_benchmark_gallery, build_comparison_browser
 from nusc_scene_agent.indexing import build_index
 from nusc_scene_agent.langgraph_agent import run_langgraph_query_pipeline
 from nusc_scene_agent.llm_client import DEFAULT_TIMEOUT_S, LLMConfig
 from nusc_scene_agent.pipeline import run_query_pipeline
+from nusc_scene_agent.scenario_mining_benchmark import generate_scenario_mining_benchmark_from_case_library
+from nusc_scene_agent.validation import ValidationConfig
 
 
 DEFAULT_DB = Path("artifacts/index/v1.0-mini.sqlite")
@@ -52,7 +58,7 @@ def _resolve_llm_config(args: argparse.Namespace) -> Optional[LLMConfig]:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="nuScenes scene mining MVP")
+    parser = argparse.ArgumentParser(description="nuScenes scene mining and benchmark generation toolkit")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     inspect_parser = subparsers.add_parser("inspect-archives", help="Inspect local nuScenes archives and readiness.")
@@ -96,6 +102,58 @@ def _build_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("--candidate-pool", type=int, default=12)
     _add_llm_args(benchmark_parser)
 
+    generate_counterfactual_parser = subparsers.add_parser(
+        "generate-counterfactual-benchmark",
+        help="Generate a contrastive counterfactual benchmark from a case library.",
+    )
+    generate_counterfactual_parser.add_argument(
+        "--case-library",
+        default="outputs/trainval_suite_llm_hybrid_en_v1/case_library.json",
+        help="Path to case_library.json used as benchmark anchors.",
+    )
+    generate_counterfactual_parser.add_argument(
+        "--output",
+        default="benchmarks/trainval_counterfactual_reference_v1.yaml",
+        help="Output YAML path for the generated benchmark.",
+    )
+    generate_counterfactual_parser.add_argument("--max-cases", type=int, default=6)
+
+    generate_scenario_parser = subparsers.add_parser(
+        "generate-scenario-mining-benchmark",
+        help="Generate a planning-centric scenario mining benchmark from a case library.",
+    )
+    generate_scenario_parser.add_argument(
+        "--case-library",
+        default="outputs/trainval_suite_llm_hybrid_en_v1/case_library.json",
+        help="Path to case_library.json used as scenario anchors.",
+    )
+    generate_scenario_parser.add_argument(
+        "--output",
+        default="benchmarks/trainval_scenario_mining_v1.yaml",
+        help="Output YAML path for the generated benchmark.",
+    )
+    generate_scenario_parser.add_argument("--max-cases", type=int, default=8)
+
+    enrich_case_library_parser = subparsers.add_parser(
+        "enrich-case-library",
+        help="Re-validate a case library to populate actor grounding and event localization fields.",
+    )
+    enrich_case_library_parser.add_argument(
+        "--case-library",
+        default="outputs/trainval_suite_llm_hybrid_en_v1/case_library.json",
+        help="Input case library JSON path.",
+    )
+    enrich_case_library_parser.add_argument(
+        "--db",
+        default="artifacts/index/v1.0-trainval.sqlite",
+        help="SQLite index used for re-validation.",
+    )
+    enrich_case_library_parser.add_argument(
+        "--output",
+        default="outputs/trainval_suite_llm_hybrid_en_v1/case_library_enriched.json",
+        help="Output JSON path for the enriched case library.",
+    )
+
     compare_parser = subparsers.add_parser(
         "benchmark-compare",
         help="Run the benchmark across rule, llm, and hybrid profiles and export a comparison summary.",
@@ -105,6 +163,36 @@ def _build_parser() -> argparse.ArgumentParser:
     compare_parser.add_argument("--output", default="outputs/trainval_profile_comparison_v1")
     compare_parser.add_argument("--candidate-pool", type=int, default=12)
     _add_llm_connection_args(compare_parser)
+
+    ablate_parser = subparsers.add_parser(
+        "benchmark-ablate",
+        help="Run an ablation study over the benchmark and export comparison artifacts.",
+    )
+    ablate_parser.add_argument("--config", default="benchmarks/trainval_scenario_mining_v1.yaml")
+    ablate_parser.add_argument("--db", default="artifacts/index/v1.0-trainval.sqlite")
+    ablate_parser.add_argument("--output", default="outputs/trainval_hybrid_ablation_v1")
+    ablate_parser.add_argument("--candidate-pool", type=int, default=12)
+    ablate_parser.add_argument("--base-query-mode", choices=["rule", "llm", "hybrid"], default="hybrid")
+    ablate_parser.add_argument("--base-rerank-mode", choices=["none", "llm"], default="llm")
+    ablate_parser.add_argument("--reuse-existing", action="store_true")
+    _add_llm_connection_args(ablate_parser)
+
+    gallery_parser = subparsers.add_parser(
+        "build-gallery",
+        help="Build a static query gallery for one benchmark output or a side-by-side browser for a comparison output.",
+    )
+    gallery_group = gallery_parser.add_mutually_exclusive_group(required=True)
+    gallery_group.add_argument(
+        "--benchmark-output",
+        default="",
+        help="Benchmark output directory that contains benchmark_summary.json.",
+    )
+    gallery_group.add_argument(
+        "--comparison-output",
+        default="",
+        help="Comparison output directory that contains benchmark_profile_comparison.json.",
+    )
+    gallery_parser.add_argument("--title", default="")
 
     demo_parser = subparsers.add_parser("demo", help="Run the end-to-end MVP demo on v1.0-mini.")
     demo_parser.add_argument("--workspace", default=".")
@@ -125,6 +213,7 @@ def _run_benchmark(
     query_mode: str = "rule",
     rerank_mode: str = "none",
     llm_config: Optional[LLMConfig] = None,
+    validation_config: Optional[ValidationConfig] = None,
 ) -> List[dict]:
     queries = load_benchmark_config(config_path)
     summaries: List[dict] = []
@@ -140,6 +229,7 @@ def _run_benchmark(
             query_mode=query_mode,
             rerank_mode=rerank_mode,
             llm_config=llm_config,
+            validation_config=validation_config,
         )
         result["id"] = spec.id
         benchmark_results.append(result)
@@ -249,6 +339,36 @@ def main() -> None:
         print("Queries:", len(summaries))
         return
 
+    if args.command == "generate-counterfactual-benchmark":
+        metadata = generate_counterfactual_benchmark_from_case_library(
+            case_library_path=Path(args.case_library),
+            output_path=Path(args.output),
+            max_cases=args.max_cases,
+        )
+        print("Counterfactual benchmark:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "generate-scenario-mining-benchmark":
+        metadata = generate_scenario_mining_benchmark_from_case_library(
+            case_library_path=Path(args.case_library),
+            output_path=Path(args.output),
+            max_cases=args.max_cases,
+        )
+        print("Scenario mining benchmark:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "enrich-case-library":
+        metadata = enrich_case_library(
+            case_library_path=Path(args.case_library),
+            db_path=Path(args.db),
+            output_path=Path(args.output),
+        )
+        print("Enriched case library:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
     if args.command == "benchmark-compare":
         output_dir = Path(args.output).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -273,6 +393,63 @@ def main() -> None:
         write_benchmark_comparison(comparison, output_dir)
         print("Benchmark comparison output:", output_dir)
         print("Profiles:", ", ".join(str(profile["name"]) for profile in profile_runs))
+        return
+
+    if args.command == "benchmark-ablate":
+        output_dir = Path(args.output).resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        llm_config = _resolve_llm_config(args)
+        ablation_runs = default_ablation_profiles(
+            base_query_mode=args.base_query_mode,
+            base_rerank_mode=args.base_rerank_mode,
+        )
+        requires_llm = any(
+            str(profile["query_mode"]) != "rule" or str(profile["rerank_mode"]) == "llm"
+            for profile in ablation_runs
+        )
+        if requires_llm and llm_config is None:
+            raise ValueError("The selected ablation profiles require LLM configuration.")
+
+        for profile in ablation_runs:
+            profile_output = output_dir / str(profile["name"])
+            profile_output.mkdir(parents=True, exist_ok=True)
+            benchmark_metrics_path = profile_output / "benchmark_metrics.json"
+            if not (args.reuse_existing and benchmark_metrics_path.exists()):
+                _run_benchmark(
+                    config_path=Path(args.config),
+                    db_path=Path(args.db),
+                    output_dir=profile_output,
+                    candidate_pool=args.candidate_pool,
+                    query_mode=str(profile["query_mode"]),
+                    rerank_mode=str(profile["rerank_mode"]),
+                    llm_config=llm_config,
+                    validation_config=profile.get("validation_config"),
+                )
+            profile["output_dir"] = str(profile_output)
+
+        comparison = build_benchmark_comparison(ablation_runs)
+        write_benchmark_comparison(comparison, output_dir)
+        write_ablation_manifest(ablation_runs, output_dir)
+        build_comparison_browser(
+            comparison_output_dir=output_dir,
+            title="nuScenes Ablation Browser",
+        )
+        print("Benchmark ablation output:", output_dir)
+        print("Profiles:", ", ".join(str(profile["name"]) for profile in ablation_runs))
+        return
+
+    if args.command == "build-gallery":
+        if args.benchmark_output:
+            metadata = build_benchmark_gallery(
+                benchmark_output_dir=Path(args.benchmark_output),
+                title=args.title or "nuScenes Benchmark Query Gallery",
+            )
+        else:
+            metadata = build_comparison_browser(
+                comparison_output_dir=Path(args.comparison_output),
+                title=args.title or "nuScenes Benchmark Comparison Browser",
+            )
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
         return
 
     if args.command == "demo":

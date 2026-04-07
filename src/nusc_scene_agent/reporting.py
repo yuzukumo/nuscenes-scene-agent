@@ -197,6 +197,38 @@ def _render_case_markdown(
             if key in case.map_context:
                 lines.append("- {0}: {1}".format(key, case.map_context[key]))
 
+    if case.actor_grounding:
+        lines.extend(["", "## Actor Grounding", ""])
+        for key in [
+            "role",
+            "category_name",
+            "category_group",
+            "instance_token",
+            "anchor_sample_idx",
+            "track_start_sample_idx",
+            "track_end_sample_idx",
+            "track_frame_count",
+        ]:
+            if key in case.actor_grounding:
+                lines.append("- {0}: {1}".format(key, case.actor_grounding[key]))
+
+    if case.event_localization:
+        lines.extend(["", "## Event Localization", ""])
+        for key in [
+            "primary_behavior",
+            "start_sample_idx",
+            "end_sample_idx",
+            "peak_sample_idx",
+            "start_t_sec",
+            "end_t_sec",
+            "peak_t_sec",
+            "duration_s",
+            "frame_count",
+            "anchor_within_window",
+        ]:
+            if key in case.event_localization:
+                lines.append("- {0}: {1}".format(key, case.event_localization[key]))
+
     lines.extend(["", "## Notes", ""])
     lines.extend(["- {0}".format(item) for item in case.notes])
     lines.extend(["", "## Figure", "", "![evidence]({0})".format(figure_name), ""])

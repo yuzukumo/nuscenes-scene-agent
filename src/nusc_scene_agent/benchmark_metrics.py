@@ -46,11 +46,32 @@ SUMMARY_TEMPLATE = Template(
     </tbody>
   </table>
 
+  {% if metrics.reference_metrics is defined and metrics.reference_metrics.query_count > 0 %}
+  <h2>Reference Case Metrics</h2>
+  <table>
+    <tbody>
+      <tr><th>Labeled Queries</th><td>{{ metrics.reference_metrics.query_count }}</td></tr>
+      <tr><th>Scene Objective@1</th><td>{{ metrics.reference_metrics.scene_objective_at_1_count }}/{{ metrics.reference_metrics.query_count }} ({{ "%.1f"|format(metrics.reference_metrics.scene_objective_at_1_rate * 100.0) }}%)</td></tr>
+      <tr><th>Scene Objective@K</th><td>{{ metrics.reference_metrics.scene_objective_at_k_count }}/{{ metrics.reference_metrics.query_count }} ({{ "%.1f"|format(metrics.reference_metrics.scene_objective_at_k_rate * 100.0) }}%)</td></tr>
+      <tr><th>Actor Objective@1</th><td>{{ metrics.reference_metrics.actor_objective_at_1_count }}/{{ metrics.reference_metrics.query_count }} ({{ "%.1f"|format(metrics.reference_metrics.actor_objective_at_1_rate * 100.0) }}%)</td></tr>
+      <tr><th>Actor Objective@K</th><td>{{ metrics.reference_metrics.actor_objective_at_k_count }}/{{ metrics.reference_metrics.query_count }} ({{ "%.1f"|format(metrics.reference_metrics.actor_objective_at_k_rate * 100.0) }}%)</td></tr>
+      <tr><th>Reference Objective@1</th><td>{{ metrics.reference_metrics.objective_at_1_count }}/{{ metrics.reference_metrics.query_count }} ({{ "%.1f"|format(metrics.reference_metrics.objective_at_1_rate * 100.0) }}%)</td></tr>
+      <tr><th>Reference Objective@K</th><td>{{ metrics.reference_metrics.objective_at_k_count }}/{{ metrics.reference_metrics.query_count }} ({{ "%.1f"|format(metrics.reference_metrics.objective_at_k_rate * 100.0) }}%)</td></tr>
+      <tr><th>Positive Localization Queries</th><td>{{ metrics.reference_metrics.positive_localization_query_count }}</td></tr>
+      <tr><th>Mean Event IoU</th><td>{{ "%.3f"|format(metrics.reference_metrics.mean_event_iou) }}</td></tr>
+      <tr><th>Mean Peak Error</th><td>{{ "%.2f"|format(metrics.reference_metrics.mean_peak_error) }}</td></tr>
+      <tr><th>Contrastive Groups</th><td>{{ metrics.reference_metrics.contrastive_group_count }}</td></tr>
+      <tr><th>Contrastive Success@1</th><td>{{ metrics.reference_metrics.contrastive_group_success_at_1_count }}/{{ metrics.reference_metrics.contrastive_group_count }} ({{ "%.1f"|format(metrics.reference_metrics.contrastive_group_success_at_1_rate * 100.0) }}%)</td></tr>
+      <tr><th>Contrastive Success@K</th><td>{{ metrics.reference_metrics.contrastive_group_success_at_k_count }}/{{ metrics.reference_metrics.contrastive_group_count }} ({{ "%.1f"|format(metrics.reference_metrics.contrastive_group_success_at_k_rate * 100.0) }}%)</td></tr>
+    </tbody>
+  </table>
+  {% endif %}
+
   <h2>Query Breakdown</h2>
   <table>
     <thead>
       <tr>
-        <th>ID</th><th>Pass@1</th><th>Pass@K</th><th>Passed</th><th>Selected</th><th>Best Score</th><th>Actors</th><th>Behaviors</th>
+        <th>ID</th><th>Pass@1</th><th>Pass@K</th><th>Scene@1</th><th>Actor@1</th><th>Ref@1</th><th>Ref@K</th><th>Passed</th><th>Selected</th><th>Best Score</th><th>Actors</th><th>Behaviors</th>
       </tr>
     </thead>
     <tbody>
@@ -59,6 +80,10 @@ SUMMARY_TEMPLATE = Template(
         <td>{{ row.id }}</td>
         <td>{{ row.pass_at_1 }}</td>
         <td>{{ row.pass_at_k }}</td>
+        <td>{{ row.scene_objective_at_1 if row.scene_objective_at_1 is not none else "-" }}</td>
+        <td>{{ row.actor_objective_at_1 if row.actor_objective_at_1 is not none else "-" }}</td>
+        <td>{{ row.reference_objective_at_1 if row.reference_objective_at_1 is not none else "-" }}</td>
+        <td>{{ row.reference_objective_at_k if row.reference_objective_at_k is not none else "-" }}</td>
         <td>{{ row.passed_count }}</td>
         <td>{{ row.selected_count }}</td>
         <td>{{ "%.2f"|format(row.best_validation_score) }}</td>
@@ -188,6 +213,96 @@ def _group_coverage(query_metrics: Sequence[Dict[str, object]], field_name: str,
     return coverage_rows
 
 
+def _selected_case_key(case: object) -> str:
+    return "{0}:{1}".format(case.candidate.sample_token, case.candidate.instance_token)
+
+
+def _event_range_iou(predicted_range: Sequence[int], reference_range: Sequence[int]) -> float:
+    if len(predicted_range) != 2 or len(reference_range) != 2:
+        return 0.0
+    p0, p1 = int(predicted_range[0]), int(predicted_range[1])
+    r0, r1 = int(reference_range[0]), int(reference_range[1])
+    inter = max(0, min(p1, r1) - max(p0, r0) + 1)
+    union = max(p1, r1) - min(p0, r0) + 1
+    if union <= 0:
+        return 0.0
+    return float(inter) / float(union)
+
+
+def _reference_metrics(query_metrics: Sequence[Dict[str, object]]) -> Dict[str, object]:
+    labeled = [row for row in query_metrics if row.get("expect_match") is not None and row.get("reference_case_keys")]
+    if not labeled:
+        return {
+            "query_count": 0,
+            "scene_objective_at_1_count": 0,
+            "scene_objective_at_1_rate": 0.0,
+            "scene_objective_at_k_count": 0,
+            "scene_objective_at_k_rate": 0.0,
+            "actor_objective_at_1_count": 0,
+            "actor_objective_at_1_rate": 0.0,
+            "actor_objective_at_k_count": 0,
+            "actor_objective_at_k_rate": 0.0,
+            "objective_at_1_count": 0,
+            "objective_at_1_rate": 0.0,
+            "objective_at_k_count": 0,
+            "objective_at_k_rate": 0.0,
+            "positive_localization_query_count": 0,
+            "mean_event_iou": 0.0,
+            "mean_peak_error": 0.0,
+            "contrastive_group_count": 0,
+            "contrastive_group_success_at_1_count": 0,
+            "contrastive_group_success_at_1_rate": 0.0,
+            "contrastive_group_success_at_k_count": 0,
+            "contrastive_group_success_at_k_rate": 0.0,
+        }
+
+    by_group: Dict[str, List[Dict[str, object]]] = defaultdict(list)
+    for row in labeled:
+        group = str(row.get("benchmark_group") or "")
+        if group:
+            by_group[group].append(row)
+
+    objective_at_1_count = sum(1 for row in labeled if row["reference_objective_at_1"])
+    objective_at_k_count = sum(1 for row in labeled if row["reference_objective_at_k"])
+    scene_objective_at_1_count = sum(1 for row in labeled if row["scene_objective_at_1"])
+    scene_objective_at_k_count = sum(1 for row in labeled if row["scene_objective_at_k"])
+    actor_objective_at_1_count = sum(1 for row in labeled if row["actor_objective_at_1"])
+    actor_objective_at_k_count = sum(1 for row in labeled if row["actor_objective_at_k"])
+    localization_rows = [
+        row
+        for row in labeled
+        if row.get("expect_match") is True and row.get("actor_objective_at_k") and row.get("event_iou") is not None
+    ]
+    group_success_at_1_count = sum(1 for rows in by_group.values() if all(item["reference_objective_at_1"] for item in rows))
+    group_success_at_k_count = sum(1 for rows in by_group.values() if all(item["reference_objective_at_k"] for item in rows))
+
+    return {
+        "query_count": len(labeled),
+        "scene_objective_at_1_count": scene_objective_at_1_count,
+        "scene_objective_at_1_rate": round(_ratio(scene_objective_at_1_count, len(labeled)), 4),
+        "scene_objective_at_k_count": scene_objective_at_k_count,
+        "scene_objective_at_k_rate": round(_ratio(scene_objective_at_k_count, len(labeled)), 4),
+        "actor_objective_at_1_count": actor_objective_at_1_count,
+        "actor_objective_at_1_rate": round(_ratio(actor_objective_at_1_count, len(labeled)), 4),
+        "actor_objective_at_k_count": actor_objective_at_k_count,
+        "actor_objective_at_k_rate": round(_ratio(actor_objective_at_k_count, len(labeled)), 4),
+        "objective_at_1_count": objective_at_1_count,
+        "objective_at_1_rate": round(_ratio(objective_at_1_count, len(labeled)), 4),
+        "objective_at_k_count": objective_at_k_count,
+        "objective_at_k_rate": round(_ratio(objective_at_k_count, len(labeled)), 4),
+        "positive_localization_query_count": len(localization_rows),
+        "mean_event_iou": round(mean(float(row["event_iou"]) for row in localization_rows), 4) if localization_rows else 0.0,
+        "mean_peak_error": round(mean(float(row["peak_error"]) for row in localization_rows if row.get("peak_error") is not None), 4)
+        if localization_rows and any(row.get("peak_error") is not None for row in localization_rows)
+        else 0.0,
+        "contrastive_group_count": len(by_group),
+        "contrastive_group_success_at_1_count": group_success_at_1_count,
+        "contrastive_group_success_at_1_rate": round(_ratio(group_success_at_1_count, len(by_group)), 4),
+        "contrastive_group_success_at_k_count": group_success_at_k_count,
+        "contrastive_group_success_at_k_rate": round(_ratio(group_success_at_k_count, len(by_group)), 4),
+    }
+
+
 def build_benchmark_metrics(
     benchmark_results: Sequence[Dict[str, object]],
     case_library_entries: Sequence[Dict[str, object]],
@@ -199,6 +314,54 @@ def build_benchmark_metrics(
         selected_cases = list(result.get("selected_cases") or [])
         passed_count = sum(1 for case in selected_cases if case.passed)
         best_case = max(selected_cases, key=lambda item: float(item.validation_score), default=None)
+        reference_case_keys = list(getattr(query_spec, "reference_case_keys", []))
+        reference_scene_names = list(getattr(query_spec, "reference_scene_names", []))
+        reference_instance_tokens = list(getattr(query_spec, "reference_instance_tokens", []))
+        reference_event_sample_range = list(getattr(query_spec, "reference_event_sample_range", []))
+        reference_peak_sample_idx = getattr(query_spec, "reference_peak_sample_idx", None)
+        expect_match = getattr(query_spec, "expect_match", None)
+        selected_case_keys = [_selected_case_key(case) for case in selected_cases]
+        selected_scene_names = [str(case.candidate.scene_name) for case in selected_cases]
+        selected_instance_tokens = [str(case.candidate.instance_token) for case in selected_cases]
+        scene_hit_at_1 = bool(selected_scene_names and selected_scene_names[0] in reference_scene_names)
+        scene_hit_at_k = any(name in reference_scene_names for name in selected_scene_names)
+        actor_hit_at_1 = bool(selected_instance_tokens and selected_instance_tokens[0] in reference_instance_tokens)
+        actor_hit_at_k = any(token in reference_instance_tokens for token in selected_instance_tokens)
+        reference_hit_at_1 = bool(selected_case_keys and selected_case_keys[0] in reference_case_keys)
+        reference_hit_at_k = any(case_key in reference_case_keys for case_key in selected_case_keys)
+        if expect_match is None or not reference_case_keys:
+            scene_objective_at_1 = None
+            scene_objective_at_k = None
+            actor_objective_at_1 = None
+            actor_objective_at_k = None
+            reference_objective_at_1 = None
+            reference_objective_at_k = None
+        else:
+            scene_objective_at_1 = scene_hit_at_1 if expect_match else not scene_hit_at_1
+            scene_objective_at_k = scene_hit_at_k if expect_match else not scene_hit_at_k
+            actor_objective_at_1 = actor_hit_at_1 if expect_match else not actor_hit_at_1
+            actor_objective_at_k = actor_hit_at_k if expect_match else not actor_hit_at_k
+            reference_objective_at_1 = reference_hit_at_1 if expect_match else not reference_hit_at_1
+            reference_objective_at_k = reference_hit_at_k if expect_match else not reference_hit_at_k
+        top_case = selected_cases[0] if selected_cases else None
+        predicted_event_range = []
+        predicted_peak_sample_idx = None
+        if top_case is not None and top_case.event_localization:
+            predicted_event_range = [
+                int(top_case.event_localization.get("start_sample_idx")),
+                int(top_case.event_localization.get("end_sample_idx")),
+            ]
+            predicted_peak_sample_idx = top_case.event_localization.get("peak_sample_idx")
+        event_iou = (
+            round(_event_range_iou(predicted_event_range, reference_event_sample_range), 4)
+            if len(reference_event_sample_range) == 2 and len(predicted_event_range) == 2
+            else None
+        )
+        peak_error = (
+            abs(int(predicted_peak_sample_idx) - int(reference_peak_sample_idx))
+            if predicted_peak_sample_idx is not None and reference_peak_sample_idx is not None
+            else None
+        )
 
         query_metrics.append(
             {
@@ -212,6 +375,28 @@ def build_benchmark_metrics(
                 "resolved_positions": list(result["query"].positions),
                 "resolved_behaviors": list(result["query"].behaviors),
                 "resolved_risk_terms": list(result["query"].risk_terms),
+                "reference_case_keys": reference_case_keys,
+                "reference_scene_names": reference_scene_names,
+                "reference_instance_tokens": reference_instance_tokens,
+                "reference_event_sample_range": reference_event_sample_range,
+                "reference_peak_sample_idx": reference_peak_sample_idx,
+                "expect_match": expect_match,
+                "benchmark_group": str(getattr(query_spec, "benchmark_group", "") or ""),
+                "variant_type": str(getattr(query_spec, "variant_type", "") or ""),
+                "scene_hit_at_1": scene_hit_at_1,
+                "scene_hit_at_k": scene_hit_at_k,
+                "actor_hit_at_1": actor_hit_at_1,
+                "actor_hit_at_k": actor_hit_at_k,
+                "scene_objective_at_1": scene_objective_at_1,
+                "scene_objective_at_k": scene_objective_at_k,
+                "actor_objective_at_1": actor_objective_at_1,
+                "actor_objective_at_k": actor_objective_at_k,
+                "reference_hit_at_1": reference_hit_at_1,
+                "reference_hit_at_k": reference_hit_at_k,
+                "reference_objective_at_1": reference_objective_at_1,
+                "reference_objective_at_k": reference_objective_at_k,
+                "event_iou": event_iou,
+                "peak_error": peak_error,
                 "selected_count": len(selected_cases),
                 "passed_count": passed_count,
                 "pass_at_1": bool(selected_cases and selected_cases[0].passed),
@@ -261,6 +446,7 @@ def build_benchmark_metrics(
             "mean_best_validation_score": round(mean(best_scores), 2) if best_scores else 0.0,
             "median_best_validation_score": round(median(best_scores), 2) if best_scores else 0.0,
         },
+        "reference_metrics": _reference_metrics(query_metrics),
         "query_metrics": query_metrics,
         "behavior_coverage": _group_coverage(query_metrics, field_name="behaviors", empty_label="none"),
         "actor_coverage": _group_coverage(query_metrics, field_name="actors", empty_label="any"),
@@ -302,18 +488,83 @@ def write_benchmark_metrics(metrics: Dict[str, object], output_dir: Path) -> Non
         "- Unique locations: {0}".format(overview["unique_locations"]),
         "- Mean best validation score: {0:.2f}".format(overview["mean_best_validation_score"]),
         "",
+    ]
+
+    reference_metrics = metrics.get("reference_metrics") or {}
+    if int(reference_metrics.get("query_count") or 0) > 0:
+        lines.extend(
+            [
+                "## Reference Case Metrics",
+                "",
+                "- Labeled queries: {0}".format(reference_metrics["query_count"]),
+                "- Scene objective@1: {0}/{1} ({2:.1%})".format(
+                    reference_metrics["scene_objective_at_1_count"],
+                    reference_metrics["query_count"],
+                    reference_metrics["scene_objective_at_1_rate"],
+                ),
+                "- Scene objective@K: {0}/{1} ({2:.1%})".format(
+                    reference_metrics["scene_objective_at_k_count"],
+                    reference_metrics["query_count"],
+                    reference_metrics["scene_objective_at_k_rate"],
+                ),
+                "- Actor objective@1: {0}/{1} ({2:.1%})".format(
+                    reference_metrics["actor_objective_at_1_count"],
+                    reference_metrics["query_count"],
+                    reference_metrics["actor_objective_at_1_rate"],
+                ),
+                "- Actor objective@K: {0}/{1} ({2:.1%})".format(
+                    reference_metrics["actor_objective_at_k_count"],
+                    reference_metrics["query_count"],
+                    reference_metrics["actor_objective_at_k_rate"],
+                ),
+                "- Reference objective@1: {0}/{1} ({2:.1%})".format(
+                    reference_metrics["objective_at_1_count"],
+                    reference_metrics["query_count"],
+                    reference_metrics["objective_at_1_rate"],
+                ),
+                "- Reference objective@K: {0}/{1} ({2:.1%})".format(
+                    reference_metrics["objective_at_k_count"],
+                    reference_metrics["query_count"],
+                    reference_metrics["objective_at_k_rate"],
+                ),
+                "- Positive localization queries: {0}".format(
+                    reference_metrics["positive_localization_query_count"]
+                ),
+                "- Mean event IoU: {0:.3f}".format(reference_metrics["mean_event_iou"]),
+                "- Mean peak error: {0:.2f}".format(reference_metrics["mean_peak_error"]),
+                "- Contrastive groups: {0}".format(reference_metrics["contrastive_group_count"]),
+                "- Contrastive success@1: {0}/{1} ({2:.1%})".format(
+                    reference_metrics["contrastive_group_success_at_1_count"],
+                    max(1, reference_metrics["contrastive_group_count"]),
+                    reference_metrics["contrastive_group_success_at_1_rate"],
+                ),
+                "- Contrastive success@K: {0}/{1} ({2:.1%})".format(
+                    reference_metrics["contrastive_group_success_at_k_count"],
+                    max(1, reference_metrics["contrastive_group_count"]),
+                    reference_metrics["contrastive_group_success_at_k_rate"],
+                ),
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
         "## Query Breakdown",
         "",
-        "| Query ID | Pass@1 | Pass@K | Passed | Selected | Best Score | Actors | Behaviors |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
-    ]
+        "| Query ID | Pass@1 | Pass@K | Scene@1 | Actor@1 | Ref@1 | Ref@K | Passed | Selected | Best Score | Actors | Behaviors |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ])
 
     for row in metrics["query_metrics"]:
         lines.append(
-            "| {0} | {1} | {2} | {3} | {4} | {5:.2f} | {6} | {7} |".format(
+            "| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} | {9:.2f} | {10} | {11} |".format(
                 row["id"],
                 row["pass_at_1"],
                 row["pass_at_k"],
+                row.get("scene_objective_at_1") if row.get("scene_objective_at_1") is not None else "-",
+                row.get("actor_objective_at_1") if row.get("actor_objective_at_1") is not None else "-",
+                row.get("reference_objective_at_1") if row.get("reference_objective_at_1") is not None else "-",
+                row.get("reference_objective_at_k") if row.get("reference_objective_at_k") is not None else "-",
                 row["passed_count"],
                 row["selected_count"],
                 row["best_validation_score"],

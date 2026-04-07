@@ -37,6 +37,8 @@ The target workflow is:
 - estimate risk-related signals such as proximity and TTC
 - use map context for lane relation, road direction, crosswalk preference, and walkway support
 - keep validation deterministic so benchmark behavior is inspectable and reproducible
+- localize the critical event window with start, end, and peak sample indices
+- export grounded primary-actor metadata for scenario-level reporting
 
 ## 5. Reporting
 
@@ -44,10 +46,47 @@ The target workflow is:
 - generate BEV evidence images
 - write case-library artifacts and benchmark metrics
 - surface hard-case groupings and benchmark-profile comparisons
+- export planning-centric scenario-mining artifacts such as event windows and grounded actors
+- export scenario-group summaries that score anchor consistency across paraphrases
+- export leaderboard-style HTML and CSV artifacts for profile comparison and behavior-level failure analysis
+- export static benchmark browsers that link query summaries, case reports, and evidence figures across profiles
+- support explicit ablation studies over reranking, map context, and event localization
 
-## Why This Counts As An Agent
+## 6. Counterfactual Benchmark Generation
 
-The repo does not implement a driving policy. The agentic part is the orchestration loop:
+The repository supports counterfactual benchmark generation from validated case libraries.
+
+The generator:
+
+- selects diverse anchor cases from an existing case library
+- creates positive canonical and paraphrase variants
+- creates actor-swap and behavior-swap negatives
+- keeps explicit `reference_case_keys` for objective evaluation
+- optionally carries reference event windows for localization-aware scoring
+
+This upgrades the project from case retrieval to benchmark construction and contrastive evaluation.
+
+## 7. Scenario Mining Benchmark Layer
+
+The repository exposes a planning-centric benchmark layer derived from validated case libraries.
+
+This layer keeps explicit:
+
+- reference scene names
+- reference actor instance tokens
+- reference event start and end sample indices
+- reference event peak sample indices
+
+That allows the metrics layer to move beyond generic retrieval scores and report scenario-mining-style outputs such as:
+
+- scene-level objective@1 and objective@K
+- actor-level objective@1 and objective@K
+- event-window overlap
+- peak-sample localization error
+
+## Agent Formulation
+
+The repository does not implement a driving policy. The agent component is the orchestration loop:
 
 - interpret user intent from open-ended risk language
 - produce retrieval hypotheses
@@ -55,20 +94,20 @@ The repo does not implement a driving policy. The agentic part is the orchestrat
 - validate the results with explicit evidence
 - package the result into usable evaluation artifacts
 
-This is a practical hybrid agent pattern: `LLM for intent understanding`, `code for evidence and stability`.
+This is a hybrid orchestration pattern: `LLM` for intent interpretation and deterministic code for evidence generation and reproducibility.
 
-## Why The Hybrid Path Matters
+## Hybrid Formulation
 
 The current `hybrid_agent` does not simply union rule and LLM outputs.
 
 Instead, it:
 
 - evaluates rule-based and LLM-based query hypotheses separately
-- builds conservative merged hypotheses when useful
+- builds conservative merged hypotheses when structured overlap supports that choice
 - retrieves and validates cases for each hypothesis
 - chooses the most evidence-supported interpretation at runtime
 
-That makes the system more stable on language-stress benchmarks than naive fusion.
+This yields a more stable formulation on language-stress benchmarks than naive fusion.
 
 ## Solo-Developer Design Constraints
 
@@ -79,4 +118,4 @@ The repo is intentionally designed to stay lightweight:
 - no simulator-first workflow
 - no requirement to maintain a large web application
 
-The focus stays on index, retrieval, validation, and benchmark generation, which gives good research and portfolio value without turning into a multi-month platform project.
+The scope remains centered on indexing, retrieval, validation, and benchmark generation, which preserves research depth without requiring a large training or platform stack.

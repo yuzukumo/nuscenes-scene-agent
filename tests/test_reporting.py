@@ -53,6 +53,8 @@ def make_case() -> ValidatedCase:
         ego_window=None,
         map_context={"available": True},
         map_geometries={},
+        actor_grounding={"role": "primary_actor", "category_name": "vehicle.car", "track_frame_count": 5},
+        event_localization={"primary_behavior": "cut_in", "start_sample_idx": 3, "end_sample_idx": 7, "peak_sample_idx": 5},
     )
 
 
@@ -99,6 +101,12 @@ class ReportingTest(unittest.TestCase):
             case_json = json.loads(next(root.glob("rank_*/case.json")).read_text())
             self.assertIn("agent_trace", case_json)
             self.assertEqual(case_json["agent_trace"]["selected_hypothesis"], "rule")
+            self.assertIn("event_localization", case_json)
+            self.assertIn("actor_grounding", case_json)
+
+            case_md = next(root.glob("rank_*/case.md")).read_text()
+            self.assertIn("## Actor Grounding", case_md)
+            self.assertIn("## Event Localization", case_md)
 
 
 if __name__ == "__main__":

@@ -88,6 +88,8 @@ class ValidatedCase:
     ego_window: Any
     map_context: Dict[str, Any] = field(default_factory=dict)
     map_geometries: Dict[str, Any] = field(default_factory=dict)
+    actor_grounding: Dict[str, Any] = field(default_factory=dict)
+    event_localization: Dict[str, Any] = field(default_factory=dict)
     figure_path: Optional[str] = None
     report_dir: Optional[str] = None
 
@@ -103,6 +105,10 @@ class ValidatedCase:
         }
         if self.map_context:
             payload["map_context"] = dict(self.map_context)
+        if self.actor_grounding:
+            payload["actor_grounding"] = dict(self.actor_grounding)
+        if self.event_localization:
+            payload["event_localization"] = dict(self.event_localization)
         if self.figure_path:
             payload["figure_path"] = self.figure_path
         if self.report_dir:
