@@ -126,7 +126,7 @@ LEADERBOARD_TEMPLATE = Template(
     <p class="meta">
       Profiles: {{ comparison.overview.profile_count }} |
       Queries: {{ comparison.overview.query_count }} |
-      Planner signal divergence: {{ comparison.overview.signal_divergence_count }}
+      Planner disagreement count: {{ comparison.overview.signal_divergence_count }}
     </p>
     <div>
       <span class="pill">Sort: Scenario Group Success@1</span>
@@ -771,7 +771,7 @@ def write_benchmark_comparison(comparison: Dict[str, object], output_dir: Path) 
         "",
         "- Profiles: {0}".format(comparison["overview"]["profile_count"]),
         "- Queries: {0}".format(comparison["overview"]["query_count"]),
-        "- Queries with planner signal divergence: {0}".format(comparison["overview"]["signal_divergence_count"]),
+        "- Queries with planner disagreement: {0}".format(comparison["overview"]["signal_divergence_count"]),
         "",
         "## Profile Overview",
         "",
@@ -960,7 +960,7 @@ def write_benchmark_comparison(comparison: Dict[str, object], output_dir: Path) 
         lines.extend(
             [
                 "",
-                "## Planner Signal Divergence",
+                "## Planner Disagreement",
                 "",
                 "| Query ID | Profile | Actors | Positions | Behaviors | Risk Terms |",
                 "| --- | --- | --- | --- | --- | --- |",

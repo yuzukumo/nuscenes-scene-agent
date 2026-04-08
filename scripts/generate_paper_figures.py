@@ -7,10 +7,14 @@ from typing import Dict, List
 import matplotlib.pyplot as plt
 import numpy as np
 
+from nusc_scene_agent.world_model_case_studies import render_world_model_case_studies
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ASSET_OUTPUT = REPO_ROOT / "assets" / "scenario_mining_results_overview.png"
 PERCEPTION_ASSET_OUTPUT = REPO_ROOT / "assets" / "perception_slice_results_overview.png"
+WORLD_MODEL_ASSET_OUTPUT = REPO_ROOT / "assets" / "world_model_results_overview.png"
+WORLD_MODEL_CASE_STUDY_OUTPUT_DIR = REPO_ROOT / "assets" / "world_model_case_studies"
 
 
 def _load_json(path: Path) -> Dict[str, object]:
@@ -162,6 +166,74 @@ def _perception_behavior_matrix() -> Dict[str, object]:
             if cell_idx is None or cell_idx >= len(cells):
                 continue
             matrix[i, j] = float(cells[cell_idx].get("mean_event_recall") or 0.0)
+    return {
+        "behaviors": behavior_order,
+        "profile_labels": [profile_labels[name] for name in profile_order],
+        "matrix": matrix,
+    }
+
+
+def _world_model_rows() -> List[Dict[str, object]]:
+    data = _load_json(REPO_ROOT / "outputs" / "trainval_world_model_proxy_study_v1" / "world_model_comparison.json")
+    rows = _profile_order(
+        list(data.get("profiles") or []),
+        ["oracle_rollout", "risk_underreach_rollout", "kinematic_rollout"],
+    )
+    result: List[Dict[str, object]] = []
+    for row in rows:
+        result.append(
+            {
+                "name": str(row["name"]),
+                "label": str(row["label"]),
+                "mean_risk_fidelity_score": float(row["mean_risk_fidelity_score"]),
+                "mean_horizon_recall": float(row["mean_horizon_recall"]),
+                "mean_occupancy_iou": float(row["mean_occupancy_iou"]),
+                "mean_primary_actor_iou": float(row["mean_primary_actor_iou"]),
+                "mean_ade_m": float(row["mean_ade_m"]),
+            }
+        )
+    return result
+
+
+def _world_model_benchmark_composition() -> Dict[str, object]:
+    payload = _load_json(REPO_ROOT / "benchmarks" / "trainval_world_model_slices_v1.json")
+    behavior_order = ["stopped_lead", "crossing", "oncoming", "proximity", "cut_in"]
+    counts = {name: 0 for name in behavior_order}
+    future_frame_counts: List[int] = []
+    for case in list(payload.get("cases") or []):
+        behavior = str(case.get("primary_behavior") or "proximity")
+        counts.setdefault(behavior, 0)
+        counts[behavior] += 1
+        future_frame_counts.append(int(case.get("future_frame_count") or 0))
+    return {
+        "behaviors": behavior_order,
+        "counts": [counts.get(name, 0) for name in behavior_order],
+        "mean_future_frame_count": float(np.mean(future_frame_counts)) if future_frame_counts else 0.0,
+    }
+
+
+def _world_model_behavior_matrix() -> Dict[str, object]:
+    data = _load_json(REPO_ROOT / "outputs" / "trainval_world_model_proxy_study_v1" / "world_model_comparison.json")
+    rows = list(data.get("behavior_matrix") or [])
+    behavior_order = ["stopped_lead", "crossing", "oncoming", "proximity", "cut_in"]
+    profile_order = ["oracle_rollout", "risk_underreach_rollout", "kinematic_rollout"]
+    profile_labels = {
+        "oracle_rollout": "Oracle",
+        "risk_underreach_rollout": "Underreach",
+        "kinematic_rollout": "Kinematic",
+    }
+    profiles = list(data.get("profiles") or [])
+    profile_index = {str(row["name"]): idx for idx, row in enumerate(profiles)}
+    behavior_map = {str(row["behavior"]): row for row in rows}
+    matrix = np.zeros((len(behavior_order), len(profile_order)), dtype=float)
+    for i, behavior in enumerate(behavior_order):
+        row = dict(behavior_map.get(behavior) or {})
+        cells = list(row.get("cells") or [])
+        for j, profile_name in enumerate(profile_order):
+            cell_idx = profile_index.get(profile_name)
+            if cell_idx is None or cell_idx >= len(cells):
+                continue
+            matrix[i, j] = float(cells[cell_idx].get("mean_risk_fidelity_score") or 0.0)
     return {
         "behaviors": behavior_order,
         "profile_labels": [profile_labels[name] for name in profile_order],
@@ -342,6 +414,92 @@ def _plot_perception_heatmap(ax: plt.Axes, matrix_payload: Dict[str, object]) ->
     cbar.set_label("Event Recall")
 
 
+def _plot_world_model_composition(ax: plt.Axes, payload: Dict[str, object]) -> None:
+    labels = [name.replace("_", "\n") for name in payload["behaviors"]]
+    values = np.asarray(payload["counts"], dtype=float)
+    colors = ["#264653", "#2a9d8f", "#e9c46a", "#c46a00", "#7a1f1f"]
+    ax.bar(np.arange(len(labels)), values, color=colors[: len(labels)], width=0.64)
+    ax.set_xticks(np.arange(len(labels)))
+    ax.set_xticklabels(labels)
+    ax.set_ylabel("Case Count")
+    ax.set_title("World-Model Slice Composition")
+    ax.set_ylim(0.0, max(float(values.max()) + 1.2, 3.5))
+    for idx, value in enumerate(values):
+        ax.text(idx, value + 0.08, "{0:.0f}".format(value), ha="center", va="bottom", fontsize=10, color="#1f1f1f")
+    ax.text(
+        0.02,
+        0.96,
+        "Mean future horizon: {0:.1f} frames".format(float(payload["mean_future_frame_count"])),
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=10,
+        color="#665d54",
+    )
+
+
+def _plot_world_model_profiles(ax: plt.Axes, rows: List[Dict[str, object]]) -> None:
+    labels = [str(row["label"]) for row in rows]
+    x = np.arange(len(labels))
+    width = 0.22
+    colors = ["#264653", "#2a9d8f", "#c46a00"]
+    risk_fidelity = np.array([float(row["mean_risk_fidelity_score"]) * 100.0 for row in rows])
+    occupancy = np.array([float(row["mean_occupancy_iou"]) * 100.0 for row in rows])
+    primary = np.array([float(row["mean_primary_actor_iou"]) * 100.0 for row in rows])
+    ade = np.array([float(row["mean_ade_m"]) for row in rows])
+
+    ax.bar(x - width, risk_fidelity, width=width, color=colors[0], label="Risk Fidelity")
+    ax.bar(x, occupancy, width=width, color=colors[1], label="Occupancy IoU")
+    ax.bar(x + width, primary, width=width, color=colors[2], label="Primary IoU")
+    ax.set_ylim(0.0, 105.0)
+    ax.set_ylabel("Rate (%)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    ax.set_title("Proxy World-Model Comparison")
+
+    line_ax = ax.twinx()
+    line_ax.plot(x, ade, color="#7a1f1f", marker="o", linewidth=2.0, label="ADE")
+    line_ax.set_ylim(0.0, max(float(ade.max()) + 0.2, 1.2))
+    line_ax.set_ylabel("ADE (m)")
+    line_ax.grid(False)
+
+    handles, labels_left = ax.get_legend_handles_labels()
+    handles2, labels_right = line_ax.get_legend_handles_labels()
+    ax.legend(handles + handles2, labels_left + labels_right, loc="upper right", frameon=False)
+
+    for idx, value in enumerate(risk_fidelity):
+        ax.text(idx - width, value + 1.5, "{0:.1f}".format(value), ha="center", va="bottom", fontsize=9, color=colors[0])
+
+
+def _plot_world_model_heatmap(ax: plt.Axes, matrix_payload: Dict[str, object]) -> None:
+    matrix = np.asarray(matrix_payload["matrix"], dtype=float)
+    im = ax.imshow(matrix, cmap="YlGnBu", vmin=0.0, vmax=1.0, aspect="auto")
+    ax.set_title("Behavior-Wise Risk Fidelity")
+    ax.set_xticks(np.arange(len(matrix_payload["profile_labels"])))
+    ax.set_xticklabels(list(matrix_payload["profile_labels"]))
+    ax.set_yticks(np.arange(len(matrix_payload["behaviors"])))
+    ax.set_yticklabels(list(matrix_payload["behaviors"]))
+    ax.set_xlabel("Proxy Profile")
+    ax.set_ylabel("Behavior Family")
+
+    for i in range(matrix.shape[0]):
+        for j in range(matrix.shape[1]):
+            value = matrix[i, j]
+            ax.text(
+                j,
+                i,
+                "{0:.0f}".format(value * 100.0),
+                ha="center",
+                va="center",
+                color="white" if value < 0.55 else "#143642",
+                fontsize=10,
+                fontweight="bold",
+            )
+
+    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
+    cbar.set_label("Risk Fidelity")
+
+
 def main() -> None:
     _apply_style()
     scenario_rows = _scenario_profile_rows()
@@ -386,8 +544,40 @@ def main() -> None:
         color="#1f1f1f",
     )
     fig2.savefig(PERCEPTION_ASSET_OUTPUT, dpi=220, bbox_inches="tight")
+
+    world_model_rows = _world_model_rows()
+    world_model_composition = _world_model_benchmark_composition()
+    world_model_matrix = _world_model_behavior_matrix()
+    fig3 = plt.figure(figsize=(16.0, 5.6), constrained_layout=True)
+    grid3 = fig3.add_gridspec(1, 3, width_ratios=[0.9, 1.35, 1.15])
+    wax1 = fig3.add_subplot(grid3[0, 0])
+    wax2 = fig3.add_subplot(grid3[0, 1])
+    wax3 = fig3.add_subplot(grid3[0, 2])
+
+    _plot_world_model_composition(wax1, world_model_composition)
+    _plot_world_model_profiles(wax2, world_model_rows)
+    _plot_world_model_heatmap(wax3, world_model_matrix)
+
+    fig3.suptitle(
+        "nuScenes Scene Mining: Scenario-Conditioned World-Model Evaluation",
+        fontsize=16,
+        fontweight="bold",
+        color="#1f1f1f",
+    )
+    fig3.savefig(WORLD_MODEL_ASSET_OUTPUT, dpi=220, bbox_inches="tight")
+    render_world_model_case_studies(
+        benchmark_path=REPO_ROOT / "benchmarks" / "trainval_world_model_slices_v1.json",
+        evaluation_dirs=[
+            REPO_ROOT / "outputs" / "nuscenes_forecast_baselines_eval" / "cv_heading",
+            REPO_ROOT / "outputs" / "nuscenes_forecast_baselines_eval" / "physics_oracle",
+        ],
+        output_dir=WORLD_MODEL_CASE_STUDY_OUTPUT_DIR,
+        max_cases=4,
+    )
     print(ASSET_OUTPUT)
     print(PERCEPTION_ASSET_OUTPUT)
+    print(WORLD_MODEL_ASSET_OUTPUT)
+    print(WORLD_MODEL_CASE_STUDY_OUTPUT_DIR / "world_model_case_studies.png")
 
 
 if __name__ == "__main__":

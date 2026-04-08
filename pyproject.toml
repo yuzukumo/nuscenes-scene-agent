@@ -38,6 +38,14 @@ dev = [
 agent = [
   "langgraph>=1.1,<2; python_version >= '3.10'",
 ]
+forecast = [
+  "torch>=2.5",
+  "torchvision>=0.20",
+  "scikit-learn>=1.3",
+]
+ros = [
+  "mcap>=1.1",
+]
 
 [project.scripts]
 nuscenes-scene-agent = "nusc_scene_agent.cli:main"

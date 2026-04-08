@@ -23,6 +23,7 @@ dist/
 
 artifacts/
 outputs/
+external/
 external_predictions/
 data/
 archives/

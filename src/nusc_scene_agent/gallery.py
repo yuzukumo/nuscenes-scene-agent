@@ -567,7 +567,7 @@ COMPARISON_BROWSER_TEMPLATE = Template(
         <div style="text-align: right;">
           <span class="badge badge-best">best: {{ card.best_profile_label }}</span>
           {% if card.signal_divergence %}
-          <span class="badge badge-div">signal divergence</span>
+          <span class="badge badge-div">planner disagreement</span>
           {% endif %}
           {% if card.has_mismatch %}
           <span class="badge badge-div">reference mismatch</span>

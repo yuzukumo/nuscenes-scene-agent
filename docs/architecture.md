@@ -23,7 +23,7 @@ The target workflow is:
 
 - `rule` mode uses a deterministic parser over scene-language patterns
 - `llm` mode asks an OpenAI-compatible model to produce structured constraints
-- `hybrid` mode evaluates multiple query hypotheses instead of blindly merging planner outputs
+- `hybrid` mode evaluates multiple query hypotheses instead of unconditionally merging planner outputs
 
 ## 3. Retrieval
 
@@ -45,13 +45,15 @@ The target workflow is:
 - export `Markdown` and `HTML` summaries
 - generate BEV evidence images
 - write case-library artifacts and benchmark metrics
-- surface hard-case groupings and benchmark-profile comparisons
-- export planning-centric scenario-mining artifacts such as event windows and grounded actors
+- surface failure-pattern groupings and benchmark-profile comparisons
+- export reference-aware scenario-mining artifacts such as event windows and grounded actors
 - export scenario-group summaries that score anchor consistency across paraphrases
 - export leaderboard-style HTML and CSV artifacts for profile comparison and behavior-level failure analysis
 - export static benchmark browsers that link query summaries, case reports, and evidence figures across profiles
 - support explicit ablation studies over reranking, map context, and event localization
 - export scenario-conditioned perception slices and model-agnostic evaluation summaries for external BEV tracking outputs
+- export scenario-conditioned world-model slices with future trajectory and occupancy supervision
+- export replay-ready JSONL or optional MCAP assets for offline system testing
 
 ## 6. Counterfactual Benchmark Generation
 
@@ -65,11 +67,11 @@ The generator:
 - keeps explicit `reference_case_keys` for objective evaluation
 - optionally carries reference event windows for localization-aware scoring
 
-This upgrades the project from case retrieval to benchmark construction and contrastive evaluation.
+This extends the repository from case retrieval to benchmark construction and contrastive evaluation.
 
 ## 7. Scenario Mining Benchmark Layer
 
-The repository exposes a planning-centric benchmark layer derived from validated case libraries.
+The repository exposes a reference-aware benchmark layer derived from validated case libraries.
 
 This layer keeps explicit:
 
@@ -112,6 +114,40 @@ The layer also includes:
 - coverage-aware benchmark filtering so split-specific prediction files can be aligned to the subset they actually cover
 - per-case `CSV`, `JSON`, `Markdown`, and `HTML` exports for downstream analysis
 
+## 9. Scenario-Conditioned World-Model Benchmark Layer
+
+The repository also derives a compact world-model benchmark from the perception-slice layer.
+
+This layer keeps:
+
+- a short observed history up to the rollout anchor
+- a short future horizon for the primary risk actor in ego coordinates
+- sparse future occupancy targets for the primary actor and surrounding context actors
+- benchmark-side risk facets inherited from the validated case anchor
+
+That makes it possible to score future rollouts with metrics such as:
+
+- full-horizon success
+- horizon recall
+- average displacement error
+- final displacement error
+- occupancy IoU
+- closest-approach distance error
+- closest-approach timing error
+- composite risk-fidelity score
+
+The layer also includes:
+
+- proxy rollout generators for controlled studies
+- an adapter for compact external rollout formats keyed by benchmark group or reference case
+- an adapter for `nuScenes prediction challenge` style multi-modal forecast outputs keyed by `(instance, sample)`
+- direct execution of the official `nuScenes` physics forecast baselines on benchmark anchors
+- per-case `CSV`, `JSON`, `Markdown`, and `HTML` evaluation exports
+- multi-profile comparison exports for behavior-wise and risk-wise analysis
+- challenge-track breakdowns for benchmark-style reporting
+- qualitative case-study rendering for benchmark-aligned trajectory comparisons
+- replay export as newline-delimited JSON and optional `MCAP`
+
 ## Agent Formulation
 
 The repository does not implement a driving policy. The agent component is the orchestration loop:
@@ -135,7 +171,7 @@ Instead, it:
 - retrieves and validates cases for each hypothesis
 - chooses the most evidence-supported interpretation at runtime
 
-This yields a more stable formulation on language-stress benchmarks than naive fusion.
+This design is intended to reduce instability relative to direct union of planner outputs on the language-robustness benchmark.
 
 ## Solo-Developer Design Constraints
 

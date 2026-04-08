@@ -17,6 +17,12 @@ from nusc_scene_agent.benchmark_exports import write_benchmark_exports
 from nusc_scene_agent.benchmark_metrics import build_benchmark_metrics, write_benchmark_metrics
 from nusc_scene_agent.case_library import build_case_library, write_case_library
 from nusc_scene_agent.benchmark_schema import load_benchmark_config
+from nusc_scene_agent.contextvae_integration import (
+    DEFAULT_CONTEXTVAE_CHECKPOINT,
+    DEFAULT_CONTEXTVAE_OUTPUT,
+    DEFAULT_CONTEXTVAE_REPO,
+    run_contextvae_world_model_study,
+)
 from nusc_scene_agent.data_utils import DEFAULT_DATAROOT, PREPARE_PROFILES, discover_archive_inventory, prepare_data
 from nusc_scene_agent.gallery import build_benchmark_gallery, build_comparison_browser
 from nusc_scene_agent.indexing import build_index
@@ -37,7 +43,24 @@ from nusc_scene_agent.perception_benchmark import (
 )
 from nusc_scene_agent.pipeline import run_query_pipeline
 from nusc_scene_agent.scenario_mining_benchmark import generate_scenario_mining_benchmark_from_case_library
+from nusc_scene_agent.world_model_benchmark import (
+    NUSCENES_FORECAST_MODE_SELECTIONS,
+    NUSCENES_FORECAST_BASELINE_PROFILES,
+    WORLD_MODEL_PROXY_PROFILES,
+    adapt_and_evaluate_nuscenes_forecast_predictions,
+    adapt_nuscenes_forecast_predictions,
+    adapt_world_model_predictions,
+    compare_world_model_evaluations,
+    evaluate_world_model_predictions,
+    export_world_model_replay,
+    generate_proxy_world_model_predictions,
+    generate_nuscenes_forecast_baselines,
+    generate_world_model_benchmark_from_perception_benchmark,
+    run_nuscenes_forecast_baselines,
+    run_proxy_world_model_study,
+)
 from nusc_scene_agent.validation import ValidationConfig
+from nusc_scene_agent.world_model_case_studies import render_world_model_case_studies
 
 
 DEFAULT_DB = Path("artifacts/index/v1.0-mini.sqlite")
@@ -46,6 +69,7 @@ DEFAULT_TRAINVAL_BENCHMARK = Path("benchmarks/trainval_suite_v1.yaml")
 DEFAULT_COMPARE_BENCHMARK = Path("benchmarks/trainval_language_stress_v1.yaml")
 DEFAULT_SCENARIO_MINING_BENCHMARK = Path("benchmarks/trainval_scenario_mining_v1.yaml")
 DEFAULT_PERCEPTION_BENCHMARK = Path("benchmarks/trainval_perception_slices_v1.json")
+DEFAULT_WORLD_MODEL_BENCHMARK = Path("benchmarks/trainval_world_model_slices_v1.json")
 
 
 def _add_llm_connection_args(parser: argparse.ArgumentParser) -> None:
@@ -135,7 +159,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     generate_scenario_parser = subparsers.add_parser(
         "generate-scenario-mining-benchmark",
-        help="Generate a planning-centric scenario mining benchmark from a case library.",
+        help="Generate a reference-aware scenario mining benchmark from a case library.",
     )
     generate_scenario_parser.add_argument(
         "--case-library",
@@ -156,6 +180,14 @@ def _build_parser() -> argparse.ArgumentParser:
     generate_perception_parser.add_argument("--config", default=str(DEFAULT_SCENARIO_MINING_BENCHMARK))
     generate_perception_parser.add_argument("--db", default="artifacts/index/v1.0-trainval.sqlite")
     generate_perception_parser.add_argument("--output", default=str(DEFAULT_PERCEPTION_BENCHMARK))
+
+    generate_world_model_parser = subparsers.add_parser(
+        "generate-world-model-benchmark",
+        help="Generate a scenario-conditioned world-model benchmark from a perception benchmark.",
+    )
+    generate_world_model_parser.add_argument("--benchmark", default=str(DEFAULT_PERCEPTION_BENCHMARK))
+    generate_world_model_parser.add_argument("--db", default="artifacts/index/v1.0-trainval.sqlite")
+    generate_world_model_parser.add_argument("--output", default=str(DEFAULT_WORLD_MODEL_BENCHMARK))
 
     proxy_predictions_parser = subparsers.add_parser(
         "generate-proxy-perception-predictions",
@@ -204,6 +236,132 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     proxy_study_parser.add_argument("--benchmark", default=str(DEFAULT_PERCEPTION_BENCHMARK))
     proxy_study_parser.add_argument("--output", default="outputs/trainval_perception_proxy_study_v1")
+
+    proxy_world_model_predictions_parser = subparsers.add_parser(
+        "generate-proxy-world-model-predictions",
+        help="Generate proxy world-model rollouts for a world-model benchmark.",
+    )
+    proxy_world_model_predictions_parser.add_argument("--benchmark", default=str(DEFAULT_WORLD_MODEL_BENCHMARK))
+    proxy_world_model_predictions_parser.add_argument("--output", default="outputs/proxy_world_model_predictions.json")
+    proxy_world_model_predictions_parser.add_argument("--profile", choices=WORLD_MODEL_PROXY_PROFILES, default="oracle_rollout")
+
+    adapt_world_model_predictions_parser = subparsers.add_parser(
+        "adapt-world-model-predictions",
+        help="Adapt compact external world-model rollouts to the local evaluation schema.",
+    )
+    adapt_world_model_predictions_parser.add_argument("--benchmark", default=str(DEFAULT_WORLD_MODEL_BENCHMARK))
+    adapt_world_model_predictions_parser.add_argument("--input", required=True)
+    adapt_world_model_predictions_parser.add_argument("--output", default="outputs/adapted_world_model_predictions.json")
+    adapt_world_model_predictions_parser.add_argument("--no-rasterize-trajectory", action="store_true")
+
+    adapt_nuscenes_forecast_parser = subparsers.add_parser(
+        "adapt-nuscenes-forecast-predictions",
+        help="Adapt nuScenes prediction-challenge style trajectory forecasts to the local world-model schema.",
+    )
+    adapt_nuscenes_forecast_parser.add_argument("--benchmark", default=str(DEFAULT_WORLD_MODEL_BENCHMARK))
+    adapt_nuscenes_forecast_parser.add_argument("--input", required=True)
+    adapt_nuscenes_forecast_parser.add_argument("--output", default="outputs/adapted_nuscenes_forecasts.json")
+    adapt_nuscenes_forecast_parser.add_argument("--mode-selection", choices=NUSCENES_FORECAST_MODE_SELECTIONS, default="top_probability")
+    adapt_nuscenes_forecast_parser.add_argument("--no-rasterize-trajectory", action="store_true")
+
+    evaluate_nuscenes_forecast_parser = subparsers.add_parser(
+        "evaluate-nuscenes-forecast-predictions",
+        help="Adapt nuScenes prediction-challenge forecasts and evaluate them on the world-model benchmark.",
+    )
+    evaluate_nuscenes_forecast_parser.add_argument("--benchmark", default=str(DEFAULT_WORLD_MODEL_BENCHMARK))
+    evaluate_nuscenes_forecast_parser.add_argument("--input", required=True)
+    evaluate_nuscenes_forecast_parser.add_argument("--output", default="outputs/nuscenes_forecast_eval")
+    evaluate_nuscenes_forecast_parser.add_argument("--mode-selection", choices=NUSCENES_FORECAST_MODE_SELECTIONS, default="top_probability")
+    evaluate_nuscenes_forecast_parser.add_argument("--profile-name", default="")
+    evaluate_nuscenes_forecast_parser.add_argument("--no-rasterize-trajectory", action="store_true")
+
+    generate_nuscenes_forecast_baselines_parser = subparsers.add_parser(
+        "generate-nuscenes-forecast-baselines",
+        help="Generate official nuScenes physics forecast baselines directly on the world-model benchmark anchors.",
+    )
+    generate_nuscenes_forecast_baselines_parser.add_argument("--benchmark", default=str(DEFAULT_WORLD_MODEL_BENCHMARK))
+    generate_nuscenes_forecast_baselines_parser.add_argument("--dataroot", default="data/sets/nuscenes")
+    generate_nuscenes_forecast_baselines_parser.add_argument("--version", default="v1.0-trainval")
+    generate_nuscenes_forecast_baselines_parser.add_argument("--output", default="outputs/nuscenes_forecast_baselines")
+
+    run_nuscenes_forecast_baselines_parser = subparsers.add_parser(
+        "run-nuscenes-forecast-baselines",
+        help="Generate, evaluate, and compare official nuScenes physics forecast baselines on the world-model benchmark.",
+    )
+    run_nuscenes_forecast_baselines_parser.add_argument("--benchmark", default=str(DEFAULT_WORLD_MODEL_BENCHMARK))
+    run_nuscenes_forecast_baselines_parser.add_argument("--dataroot", default="data/sets/nuscenes")
+    run_nuscenes_forecast_baselines_parser.add_argument("--version", default="v1.0-trainval")
+    run_nuscenes_forecast_baselines_parser.add_argument("--output", default="outputs/nuscenes_forecast_baselines_eval")
+    run_nuscenes_forecast_baselines_parser.add_argument("--mode-selection", choices=NUSCENES_FORECAST_MODE_SELECTIONS, default="top_probability")
+
+    run_contextvae_world_model_parser = subparsers.add_parser(
+        "run-contextvae-world-model-study",
+        help="Run the ContextVAE multimodal forecasting baseline on the forecast-compatible world-model benchmark subset.",
+    )
+    run_contextvae_world_model_parser.add_argument("--benchmark", default=str(DEFAULT_WORLD_MODEL_BENCHMARK))
+    run_contextvae_world_model_parser.add_argument("--dataroot", default=str(DEFAULT_DATAROOT))
+    run_contextvae_world_model_parser.add_argument("--version", default="v1.0-trainval")
+    run_contextvae_world_model_parser.add_argument("--output", default=str(DEFAULT_CONTEXTVAE_OUTPUT))
+    run_contextvae_world_model_parser.add_argument("--repo", default=str(DEFAULT_CONTEXTVAE_REPO))
+    run_contextvae_world_model_parser.add_argument("--checkpoint", default=str(DEFAULT_CONTEXTVAE_CHECKPOINT))
+    run_contextvae_world_model_parser.add_argument("--device", default="")
+    run_contextvae_world_model_parser.add_argument("--batch-size", type=int, default=8)
+    run_contextvae_world_model_parser.add_argument("--mode-count", type=int, default=5)
+    run_contextvae_world_model_parser.add_argument("--clustering-samples", type=int, default=2000)
+    run_contextvae_world_model_parser.add_argument("--map-scale", type=int, default=1)
+    run_contextvae_world_model_parser.add_argument("--seed", type=int, default=1)
+
+    evaluate_world_model_parser = subparsers.add_parser(
+        "evaluate-world-model-predictions",
+        help="Evaluate future trajectory and occupancy predictions on the scenario-conditioned world-model benchmark.",
+    )
+    evaluate_world_model_parser.add_argument("--benchmark", default=str(DEFAULT_WORLD_MODEL_BENCHMARK))
+    evaluate_world_model_parser.add_argument("--predictions", required=True)
+    evaluate_world_model_parser.add_argument("--output", default="outputs/world_model_evaluation")
+    evaluate_world_model_parser.add_argument("--profile-name", default="")
+
+    proxy_world_model_study_parser = subparsers.add_parser(
+        "run-proxy-world-model-study",
+        help="Run a proxy comparison on the scenario-conditioned world-model benchmark.",
+    )
+    proxy_world_model_study_parser.add_argument("--benchmark", default=str(DEFAULT_WORLD_MODEL_BENCHMARK))
+    proxy_world_model_study_parser.add_argument("--output", default="outputs/trainval_world_model_proxy_study_v1")
+
+    compare_world_model_parser = subparsers.add_parser(
+        "compare-world-model-evaluations",
+        help="Compare multiple world-model evaluation output directories.",
+    )
+    compare_world_model_parser.add_argument(
+        "--eval-dir",
+        action="append",
+        default=[],
+        required=True,
+        help="Evaluation directory that contains world_model_metrics.json. Repeatable.",
+    )
+    compare_world_model_parser.add_argument("--output", default="outputs/world_model_comparison")
+
+    export_world_model_parser = subparsers.add_parser(
+        "export-world-model-replay",
+        help="Export world-model benchmark cases as replay-ready JSONL or MCAP artifacts.",
+    )
+    export_world_model_parser.add_argument("--benchmark", default=str(DEFAULT_WORLD_MODEL_BENCHMARK))
+    export_world_model_parser.add_argument("--output", default="outputs/world_model_replay")
+    export_world_model_parser.add_argument("--format", choices=["jsonl", "mcap"], default="jsonl")
+
+    render_world_model_case_studies_parser = subparsers.add_parser(
+        "render-world-model-case-studies",
+        help="Render qualitative case studies from world-model evaluation outputs.",
+    )
+    render_world_model_case_studies_parser.add_argument("--benchmark", default=str(DEFAULT_WORLD_MODEL_BENCHMARK))
+    render_world_model_case_studies_parser.add_argument(
+        "--eval-dir",
+        action="append",
+        default=[],
+        required=True,
+        help="Evaluation directory that contains world_model_metrics.json and adapted_predictions.json. Repeatable.",
+    )
+    render_world_model_case_studies_parser.add_argument("--output", default="outputs/world_model_case_studies")
+    render_world_model_case_studies_parser.add_argument("--max-cases", type=int, default=4)
 
     compare_perception_parser = subparsers.add_parser(
         "compare-perception-evaluations",
@@ -303,7 +461,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     gallery_parser.add_argument("--title", default="")
 
-    demo_parser = subparsers.add_parser("demo", help="Run the end-to-end MVP demo on v1.0-mini.")
+    demo_parser = subparsers.add_parser("demo", help="Run the minimal v1.0-mini example workflow.")
     demo_parser.add_argument("--workspace", default=".")
     demo_parser.add_argument("--dataroot", default=str(DEFAULT_DATAROOT))
     demo_parser.add_argument("--db", default=str(DEFAULT_DB))
@@ -478,6 +636,16 @@ def main() -> None:
         print(json.dumps(metadata, indent=2, ensure_ascii=False))
         return
 
+    if args.command == "generate-world-model-benchmark":
+        metadata = generate_world_model_benchmark_from_perception_benchmark(
+            perception_benchmark_path=Path(args.benchmark),
+            db_path=Path(args.db),
+            output_path=Path(args.output),
+        )
+        print("World-model benchmark:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
     if args.command == "generate-proxy-perception-predictions":
         metadata = generate_proxy_perception_predictions(
             benchmark_path=Path(args.benchmark),
@@ -558,6 +726,144 @@ def main() -> None:
             output_dir=Path(args.output),
         )
         print("Proxy perception study:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "generate-proxy-world-model-predictions":
+        metadata = generate_proxy_world_model_predictions(
+            benchmark_path=Path(args.benchmark),
+            output_path=Path(args.output),
+            profile_name=args.profile,
+        )
+        print("Proxy world-model predictions:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "adapt-world-model-predictions":
+        metadata = adapt_world_model_predictions(
+            benchmark_path=Path(args.benchmark),
+            input_path=Path(args.input),
+            output_path=Path(args.output),
+            rasterize_trajectory=not bool(args.no_rasterize_trajectory),
+        )
+        print("Adapted world-model predictions:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "adapt-nuscenes-forecast-predictions":
+        metadata = adapt_nuscenes_forecast_predictions(
+            benchmark_path=Path(args.benchmark),
+            input_path=Path(args.input),
+            output_path=Path(args.output),
+            mode_selection=args.mode_selection,
+            rasterize_trajectory=not bool(args.no_rasterize_trajectory),
+        )
+        print("Adapted nuScenes forecasts:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "evaluate-world-model-predictions":
+        summary = evaluate_world_model_predictions(
+            benchmark_path=Path(args.benchmark),
+            predictions_path=Path(args.predictions),
+            output_dir=Path(args.output),
+            profile_name=args.profile_name,
+        )
+        print("World-model evaluation:", Path(args.output).resolve())
+        print(json.dumps(summary["overview"], indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "evaluate-nuscenes-forecast-predictions":
+        metadata = adapt_and_evaluate_nuscenes_forecast_predictions(
+            benchmark_path=Path(args.benchmark),
+            input_path=Path(args.input),
+            output_dir=Path(args.output),
+            mode_selection=args.mode_selection,
+            profile_name=args.profile_name,
+            rasterize_trajectory=not bool(args.no_rasterize_trajectory),
+        )
+        print("nuScenes forecast evaluation:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "generate-nuscenes-forecast-baselines":
+        metadata = generate_nuscenes_forecast_baselines(
+            benchmark_path=Path(args.benchmark),
+            dataroot=Path(args.dataroot),
+            version=args.version,
+            output_dir=Path(args.output),
+        )
+        print("nuScenes forecast baselines:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "run-nuscenes-forecast-baselines":
+        metadata = run_nuscenes_forecast_baselines(
+            benchmark_path=Path(args.benchmark),
+            dataroot=Path(args.dataroot),
+            version=args.version,
+            output_dir=Path(args.output),
+            mode_selection=args.mode_selection,
+        )
+        print("nuScenes forecast baseline evaluation:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "run-contextvae-world-model-study":
+        metadata = run_contextvae_world_model_study(
+            benchmark_path=Path(args.benchmark),
+            dataroot=Path(args.dataroot),
+            version=args.version,
+            output_dir=Path(args.output),
+            repo_dir=Path(args.repo),
+            checkpoint_path=Path(args.checkpoint),
+            device=args.device,
+            batch_size=args.batch_size,
+            mode_count=args.mode_count,
+            clustering_samples=args.clustering_samples,
+            map_scale=args.map_scale,
+            seed=args.seed,
+        )
+        print("ContextVAE world-model study:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "run-proxy-world-model-study":
+        metadata = run_proxy_world_model_study(
+            benchmark_path=Path(args.benchmark),
+            output_dir=Path(args.output),
+        )
+        print("Proxy world-model study:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "compare-world-model-evaluations":
+        metadata = compare_world_model_evaluations(
+            evaluation_dirs=[Path(path) for path in args.eval_dir],
+            output_dir=Path(args.output),
+        )
+        print("World-model comparison:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "export-world-model-replay":
+        metadata = export_world_model_replay(
+            benchmark_path=Path(args.benchmark),
+            output_dir=Path(args.output),
+            export_format=args.format,
+        )
+        print("World-model replay export:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "render-world-model-case-studies":
+        metadata = render_world_model_case_studies(
+            benchmark_path=Path(args.benchmark),
+            evaluation_dirs=[Path(path) for path in args.eval_dir],
+            output_dir=Path(args.output),
+            max_cases=args.max_cases,
+        )
+        print("World-model case studies:", Path(args.output).resolve())
         print(json.dumps(metadata, indent=2, ensure_ascii=False))
         return
 
@@ -688,7 +994,7 @@ def main() -> None:
             rerank_mode=args.rerank_mode,
             llm_config=llm_config,
         )
-        print("Demo complete:", output_dir)
+        print("Mini example complete:", output_dir)
         print(json.dumps(summaries, indent=2, ensure_ascii=False))
         return
 

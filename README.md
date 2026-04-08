@@ -31,11 +31,12 @@ It is not a driving policy, an end-to-end training stack, or a simulator-first p
 - Compare `rule_only`, `llm_planner`, and `hybrid_agent` on the same risky-scene benchmark.
 - Generate counterfactual benchmark variants anchored to validated reference cases.
 - Evaluate scenario-conditioned perception slices derived from mined risk cases.
+- Evaluate scenario-conditioned world-model rollouts and export replay-ready artifacts.
 
-## Example Outputs
+## Representative Outputs
 
 <p align="center">
-  <img src="./assets/readme_showcase.png" alt="Risky scene mining showcase" width="100%">
+  <img src="./assets/readme_overview.png" alt="Representative scene-mining outputs" width="100%">
 </p>
 
 Representative outputs produced by the pipeline include:
@@ -49,7 +50,7 @@ Representative outputs produced by the pipeline include:
 
 The reporting pipeline exports `BEV evidence PNG` together with `Markdown` and `HTML` reports.
 
-## Agent Design
+## Orchestration Design
 
 This repository implements an orchestration agent rather than a driving policy.
 
@@ -63,7 +64,7 @@ It combines:
 
 The core design is hybrid: `LLM` for intent understanding and ranking, `deterministic code` for evidence, filtering, and reproducibility.
 
-## Planning-Centric Outputs
+## Exported Benchmark Artifacts
 
 The validation and reporting pipeline now exports structured scenario-mining fields in addition to case-level reports:
 
@@ -73,10 +74,11 @@ The validation and reporting pipeline now exports structured scenario-mining fie
 - reference-aware benchmark fields for contrastive evaluation
 - counterfactual benchmark groups anchored to validated cases
 - scenario-conditioned perception slices with event-window actor tracks in ego coordinates
+- scenario-conditioned world-model slices with observed history, future rollouts, and sparse occupancy supervision
 
 ## Scenario Mining Benchmark Generation
 
-The repository generates a planning-centric scenario mining benchmark from a validated case library. The benchmark targets positive scenario retrieval with explicit reference scene, actor, and event-window supervision.
+The repository generates a reference-aware scenario mining benchmark from a validated case library. The benchmark targets positive scenario retrieval with explicit reference scene, actor, and event-window supervision.
 
 Generate a scenario mining benchmark:
 
@@ -254,6 +256,192 @@ On the shared subset, both methods solve the `stopped_lead` slice, while `PointP
   <img src="./assets/perception_slice_results_overview.png" alt="Scenario-conditioned perception slice evaluation overview" width="100%">
 </p>
 
+## Scenario-Conditioned World-Model Evaluation
+
+The repository also exposes a world-model benchmark derived from the perception-slice layer. Each case keeps a short observed history, a short future horizon for the primary risk actor, sparse future occupancy for the actor and its local context, and the inherited risk facets from the validated scenario anchor.
+
+The benchmark also defines named challenge tracks such as `challenge/crossing_emergence`, `challenge/large_lead_occluder`, `challenge/lateral_merge`, and `challenge/opposite_direction_conflict`.
+
+Generate the world-model benchmark:
+
+```bash
+python -m nusc_scene_agent generate-world-model-benchmark \
+  --benchmark benchmarks/trainval_perception_slices_v1.json \
+  --db artifacts/index/v1.0-trainval.sqlite \
+  --output benchmarks/trainval_world_model_slices_v1.json
+```
+
+Run the built-in proxy study:
+
+```bash
+python -m nusc_scene_agent run-proxy-world-model-study \
+  --benchmark benchmarks/trainval_world_model_slices_v1.json \
+  --output outputs/trainval_world_model_proxy_study_v1
+```
+
+Adapt compact external rollouts to the local schema:
+
+```bash
+python -m nusc_scene_agent adapt-world-model-predictions \
+  --benchmark benchmarks/trainval_world_model_slices_v1.json \
+  --input /path/to/compact_rollout.json \
+  --output outputs/adapted_world_model_predictions.json
+```
+
+Adapt `nuScenes prediction challenge` style forecasts:
+
+```bash
+python -m nusc_scene_agent adapt-nuscenes-forecast-predictions \
+  --benchmark benchmarks/trainval_world_model_slices_v1.json \
+  --input /path/to/nuscenes_forecasts.json \
+  --mode-selection top_probability \
+  --output outputs/adapted_nuscenes_forecasts.json
+```
+
+Adapt and evaluate in one step:
+
+```bash
+python -m nusc_scene_agent evaluate-nuscenes-forecast-predictions \
+  --benchmark benchmarks/trainval_world_model_slices_v1.json \
+  --input /path/to/nuscenes_forecasts.json \
+  --mode-selection oracle_ade \
+  --output outputs/nuscenes_forecast_eval
+```
+
+Supported mode-selection policies:
+
+- `top_probability`
+- `oracle_ade`
+- `oracle_fde`
+
+For predictions that carry multiple modes, the evaluation export also reports benchmark-aligned forecast metrics:
+
+- `MinADE@1`, `MinADE@5`, `MinADE@10`
+- `MinFDE@1`, `MinFDE@5`, `MinFDE@10`
+- `MissRate@1`, `MissRate@5`, `MissRate@10`
+
+Export replay-ready artifacts:
+
+```bash
+python -m nusc_scene_agent export-world-model-replay \
+  --benchmark benchmarks/trainval_world_model_slices_v1.json \
+  --output outputs/trainval_world_model_replay_v1 \
+  --format jsonl
+```
+
+Optional `MCAP` export support:
+
+```bash
+pip install -e ".[ros]"
+```
+
+This exports:
+
+- `benchmarks/trainval_world_model_slices_v1.json`
+- `outputs/trainval_world_model_proxy_study_v1/world_model_comparison_summary.md`
+- `outputs/trainval_world_model_proxy_study_v1/world_model_comparison_summary.html`
+- `outputs/trainval_world_model_proxy_study_v1/world_model_leaderboard.csv`
+- benchmark metadata with named challenge-track definitions
+- per-profile `JSON`, `Markdown`, `HTML`, and `CSV` summaries under `oracle_rollout`, `kinematic_rollout`, and `risk_underreach_rollout`
+- adapters for compact custom rollouts and `nuScenes prediction challenge` style forecast files
+- replay artifacts such as `replay_manifest.json` and per-case `JSONL` files
+
+Local `v1.0-trainval` snapshot:
+
+| Profile | Full Horizon | Mean Horizon Recall | Mean ADE | Mean FDE | Mean Occupancy IoU | Mean Risk Fidelity |
+| --- | --- | --- | --- | --- | --- | --- |
+| `oracle_rollout` | `8/8` | `1.000` | `0.000` | `0.000` | `1.000` | `1.000` |
+| `risk_underreach_rollout` | `8/8` | `1.000` | `0.782` | `0.905` | `0.889` | `0.853` |
+| `kinematic_rollout` | `8/8` | `1.000` | `0.838` | `0.959` | `0.883` | `0.853` |
+
+The current slice set retains all `8` mined anchors. When the original event anchor falls at the end of the localized window, the rollout anchor is moved back by one frame so the benchmark keeps a non-zero forecast horizon without changing the mined case identity.
+
+In the local proxy study:
+
+- `crossing` remains comparatively stable for both non-oracle profiles, with mean risk fidelity above `0.93`
+- `cut_in` is the lowest-performing family in the current proxy study and produces the lowest occupancy agreement
+- `stopped_lead` and generic `proximity` slices expose risk-alignment errors even when horizon coverage remains complete
+- the evaluation export now includes challenge-track breakdowns in addition to behavior and risk-facet breakdowns
+- the replay export writes `66` messages across `8` case files in the current local snapshot
+
+Official `nuScenes` physics-baseline example on the benchmark anchors:
+
+```bash
+python -m nusc_scene_agent run-nuscenes-forecast-baselines \
+  --benchmark benchmarks/trainval_world_model_slices_v1.json \
+  --dataroot data/sets/nuscenes \
+  --version v1.0-trainval \
+  --output outputs/nuscenes_forecast_baselines_eval \
+  --mode-selection top_probability
+```
+
+Local snapshot on the same `8` benchmark anchors:
+
+| Profile | Full Horizon | Mean ADE | Mean MinADE@1 | Mean MissRate@5 | Mean Occupancy IoU | Mean Risk Fidelity |
+| --- | --- | --- | --- | --- | --- | --- |
+| `physics_oracle` | `8/8` | `0.212` | `0.212` | `0.000` | `0.175` | `0.840` |
+| `cv_heading` | `8/8` | `0.288` | `0.288` | `0.125` | `0.175` | `0.823` |
+
+Observed comparison:
+
+- `physics_oracle` improves trajectory and closest-approach accuracy over `cv_heading`
+- the new forecast-metric block shows the same ranking under `MinADE@1` and `MissRate@5`
+- occupancy IoU remains low for both because the current occupancy target includes surrounding context actors, whereas these baselines only predict the primary actor trajectory
+- `challenge/shared_lane_lead` is the clearest separation point, where `physics_oracle` reaches `0.834` risk fidelity and `cv_heading` reaches `0.799`
+
+Real multi-modal paper baseline example (`ContextVAE`, IEEE RA-L 2023):
+
+```bash
+pip install -e ".[forecast]"
+```
+
+```bash
+git clone https://github.com/xupei0610/ContextVAE.git external/ContextVAE
+python -m nusc_scene_agent run-contextvae-world-model-study \
+  --benchmark benchmarks/trainval_world_model_slices_v1.json \
+  --dataroot data/sets/nuscenes \
+  --version v1.0-trainval \
+  --output outputs/contextvae_world_model_study_v1 \
+  --repo external/ContextVAE \
+  --checkpoint external/ContextVAE/models/nuscenes_res18 \
+  --device cuda \
+  --batch-size 4 \
+  --mode-count 5 \
+  --clustering-samples 2000
+```
+
+If the checkpoint is missing, the integration downloads the public `nuscenes_res18` release automatically. The command writes:
+
+- a forecast-compatible benchmark subset under `outputs/contextvae_world_model_study_v1/contextvae_dataset`
+- raw `nuScenes prediction challenge` style forecasts from the external model
+- adapted world-model evaluation outputs under `outputs/contextvae_world_model_study_v1/contextvae`
+- same-subset `cv_heading` and `physics_oracle` baselines under `outputs/contextvae_world_model_study_v1/nuscenes_baselines`
+- a three-way comparison under `outputs/contextvae_world_model_study_v1/comparison`
+
+Local snapshot on the forecast-compatible subset (`7/8` original cases):
+
+| Profile | Cases | Mean ADE | Mean MinADE@5 | Mean Occupancy IoU | Mean Risk Fidelity |
+| --- | --- | --- | --- | --- | --- |
+| `physics_oracle` | `7` | `0.135` | `0.135` | `0.197` | `0.860` |
+| `cv_heading` | `7` | `0.139` | `0.139` | `0.197` | `0.859` |
+| `contextvae` | `7` | `0.280` | `0.207` | `0.181` | `0.841` |
+
+Observed comparison on the same subset:
+
+- `ContextVAE` retains full horizon coverage on every compatible case
+- `MinADE@5` improves from `0.280` to `0.207`, confirming that the exported multi-modal heads are preserved through the local adapter
+- the main residual gap remains occupancy agreement because the benchmark occupancy target includes surrounding context actors, while the external forecast only predicts the primary actor trajectory
+
+Qualitative case studies generated from the same outputs:
+
+<p align="center">
+  <img src="./assets/world_model_case_studies/world_model_case_studies.png" alt="Scenario-conditioned world-model case studies" width="100%">
+</p>
+
+<p align="center">
+  <img src="./assets/world_model_results_overview.png" alt="Scenario-conditioned world-model evaluation overview" width="100%">
+</p>
+
 ## Ablation Track
 
 The repository provides ablations over the hybrid scenario-mining pipeline:
@@ -290,7 +478,7 @@ Local `hybrid` ablation snapshot:
 | `no_map_context` | `12/16` | `7/16` | `7/16` | `3/8` | `0.636` | `79.97` |
 | `no_event_localization` | `16/16` | `13/16` | `13/16` | `6/8` | `0.000` | `92.67` |
 
-In local ablation, the map-aware validator is the dominant component for this benchmark. Reranking does not change the final ranking on this query set, while event localization affects localization-aware metrics rather than retrieval success.
+In the current ablation snapshot, the map-aware validator has the largest effect on benchmark performance. Reranking does not change the final ranking on this query set, while event localization affects localization-aware metrics rather than retrieval success.
 
 ## Data Policy
 
@@ -357,7 +545,7 @@ Check readiness:
 python -m nusc_scene_agent inspect-archives --workspace .
 ```
 
-### 3. Run a minimal end-to-end demo
+### 3. Run a minimal mini-split example
 
 Prepare `v1.0-mini`:
 
@@ -382,7 +570,7 @@ Run one query:
 python -m nusc_scene_agent query \
   "pedestrian crossing at close range ahead of ego lane" \
   --db artifacts/index/v1.0-mini.sqlite \
-  --output outputs/demo_query \
+  --output outputs/mini_query \
   --query-mode rule
 ```
 
@@ -416,7 +604,7 @@ python -m nusc_scene_agent benchmark \
   --rerank-mode llm
 ```
 
-Run the language-stress comparison:
+Run the language-robustness comparison:
 
 ```bash
 python -m nusc_scene_agent benchmark-compare \
@@ -427,7 +615,7 @@ python -m nusc_scene_agent benchmark-compare \
 
 ## LLM Configuration
 
-`LLM` support is optional. Rule-only retrieval works without any API configuration.
+`LLM` support is optional. Rule-only retrieval does not require API configuration.
 
 To enable `--query-mode llm|hybrid` or `--rerank-mode llm`, set:
 
@@ -437,11 +625,11 @@ export NUSC_SCENE_AGENT_LLM_API_KEY="your-key"
 export NUSC_SCENE_AGENT_LLM_MODEL="your-model"
 ```
 
-The runtime uses an OpenAI-compatible `Responses API` flow and keeps retrieval and validation available even if planning or reranking fails.
+The runtime uses an OpenAI-compatible `Responses API` flow. Retrieval and validation remain available when planning or reranking is not used.
 
 ## Optional LangGraph Workflow
 
-The repository includes a thin `LangGraph` orchestration layer on top of the existing planner, retrieval, validation, and reporting modules.
+The repository includes an optional `LangGraph` orchestration layer on top of the existing planner, retrieval, validation, and reporting modules.
 
 Install the optional dependency:
 
@@ -511,7 +699,7 @@ Local snapshot on `v1.0-trainval + map expansion`:
 | Unique passed cases | `29` |
 | Mean best validation score | `89.26` |
 
-### Language-Stress Comparison
+### Language Robustness Comparison
 
 | Profile | Pass@1 | Mean best score |
 | --- | --- | --- |
@@ -521,9 +709,9 @@ Local snapshot on `v1.0-trainval + map expansion`:
 
 Additional observations:
 
-- planner signal divergence: `12 / 16`
-- hybrid arbitration improves performance relative to the planner-only profile
-- hard-case taxonomy exposes overlap, borderline, and behavior-gap failure modes
+- planner disagreement count: `12 / 16`
+- the `hybrid_agent` profile improves mean best score relative to `llm_planner`
+- the failure taxonomy identifies overlap, borderline, and behavior-gap failure modes
 
 More context:
 
@@ -535,7 +723,7 @@ More context:
 ```text
 src/nusc_scene_agent/    core library and CLI
 benchmarks/              benchmark configs
-assets/                  repo-safe showcase figures
+assets/                  static figures referenced by the README and docs
 docs/                    architecture and dataset notes
 tests/                   unit tests for retrieval, validation, reporting, and benchmarks
 environment.yml          conda-first environment
@@ -547,6 +735,7 @@ Large local directories are intentionally not tracked:
 - `data/`
 - `artifacts/`
 - `outputs/`
+- `external/`
 
 ## Command Surface
 
@@ -564,15 +753,27 @@ The CLI supports:
 - `generate-counterfactual-benchmark`
 - `generate-scenario-mining-benchmark`
 - `generate-perception-benchmark`
+- `generate-world-model-benchmark`
 - `generate-proxy-perception-predictions`
+- `generate-proxy-world-model-predictions`
+- `adapt-world-model-predictions`
+- `adapt-nuscenes-forecast-predictions`
+- `generate-nuscenes-forecast-baselines`
+- `run-contextvae-world-model-study`
 - `adapt-nuscenes-predictions`
 - `filter-perception-benchmark`
 - `evaluate-perception-predictions`
+- `evaluate-world-model-predictions`
+- `evaluate-nuscenes-forecast-predictions`
+- `run-nuscenes-forecast-baselines`
 - `run-proxy-perception-study`
+- `run-proxy-world-model-study`
 - `evaluate-nuscenes-predictions`
 - `evaluate-nuscenes-predictions-covered`
 - `compare-perception-evaluations`
+- `compare-world-model-evaluations`
+- `export-world-model-replay`
 - `enrich-case-library`
 - `demo`
 
-These commands cover archive inspection, dataset preparation, indexing, retrieval, validation, and benchmark export.
+These commands cover archive inspection, dataset preparation, indexing, retrieval, validation, benchmark export, and replay packaging.
