@@ -1,6 +1,6 @@
 # Benchmark Snapshot Notes
 
-Large generated outputs are kept local by default. The current local runs nonetheless provide a compact summary of system behavior.
+Large generated outputs are kept local by default. Local runs nonetheless provide a compact summary of system behavior.
 
 ## Core Trainval Suite
 
@@ -50,7 +50,7 @@ Additional signal:
 
 The planning-centric scenario mining suite evaluates whether a profile retrieves not only a risky case, but also the correct scene anchor, actor identity, and event window.
 
-Current local snapshot on `benchmarks/trainval_scenario_mining_v1.yaml`:
+Local snapshot on `benchmarks/trainval_scenario_mining_v1.yaml`:
 
 | Profile | Pass@1 | Mean Best Score | Scene@1 | Actor@1 | Reference@1 | Scenario Group Success@1 | Mean Event IoU | Mean Peak Error |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -90,7 +90,7 @@ Observed failure patterns:
 
 The repository includes a module-level ablation track over the hybrid scenario-mining pipeline.
 
-Current local snapshot on `outputs/trainval_hybrid_ablation_v1`:
+Local snapshot on `outputs/trainval_hybrid_ablation_v1`:
 
 | Variant | Pass@1 | Mean Best Score | Scene@1 | Actor@1 | Reference@1 | Scenario Group Success@1 | Mean Event IoU | Mean Peak Error |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -114,6 +114,99 @@ Observed ablation conclusions:
 - the map ablation is especially damaging on `crossing` and `stopped_lead`, where lane and crosswalk support stabilize the final match
 - disabling event localization preserves retrieval outcomes but collapses localization-aware metrics to zero, which is expected and validates that the benchmark can isolate localization contributions
 
+## Scenario-Conditioned Perception Slice Evaluation
+
+The repository also supports a scenario-conditioned perception evaluation layer derived from the validated scenario-mining anchors. This layer exports short event-window actor tracks in ego coordinates and evaluates external perception outputs on these mined slices.
+
+The same layer also exposes:
+
+- benchmark-side `risk_facets` for distance band, TTC band, visibility band, map relation, and occlusion proxy
+- an adapter from official `nuScenes` detection or tracking JSON into the local evaluation schema
+- per-profile `CSV` exports for case-level perception metrics
+
+Local snapshot on `benchmarks/trainval_perception_slices_v1.json`:
+
+| Profile | Cases | Anchor Recall | Full Track | Mean Event Recall | Mean Contiguous Coverage | Mean Center Error | Mean First Match Lag |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `oracle_tracking` | 8 | 8/8 | 8/8 | 1.000 | 1.000 | 0.000 | 0.00 |
+| `crossing_sparse_track` | 8 | 8/8 | 6/8 | 0.884 | 0.789 | 0.151 | 0.00 |
+| `delayed_track` | 8 | 8/8 | 0/8 | 0.691 | 0.691 | 0.403 | 1.62 |
+
+Behavior-sensitive findings:
+
+- the current slice set contains `8` anchors spanning `stopped_lead`, `crossing`, `oncoming`, `cut_in`, and close-proximity interactions
+- `crossing_sparse_track` preserves anchor recall but collapses full-track success on the two `crossing` slices, where mean event recall drops to `0.536`
+- `delayed_track` preserves anchor recall at the current anchor placement but reduces full-track success to `0/8` and introduces a mean first-match lag of `1.62` frames
+- `stopped_lead` slices remain robust to temporal sparsity but not to delayed initialization, which makes the layer useful for distinguishing fragmentation from track warm-up failure
+
+Risk-conditioned findings:
+
+- all current slices fall into `urgent_ttc`, so the current split is primarily discriminated by geometry and map relation rather than TTC strata
+- `crossing_emergence` cases account for the full regression of `crossing_sparse_track`, while `large_lead_occluder` remains stable in that proxy setting
+- `near_range` slices regress under sparse tracking, whereas `critical_range` slices remain stable for the current proxy profiles
+- `shared_lane_supported` cases remain robust to sparse tracking but not to delayed initialization, which indicates that the benchmark can separate warm-up failure from sampling sparsity
+
+The detailed local exports are:
+
+- `outputs/trainval_perception_proxy_study_v1/perception_comparison_summary.md`
+- `outputs/trainval_perception_proxy_study_v1/perception_comparison_summary.html`
+- `outputs/trainval_perception_proxy_study_v1/perception_leaderboard.csv`
+- `outputs/trainval_perception_proxy_study_v1/oracle_tracking/perception_metrics_summary.md`
+- `outputs/trainval_perception_proxy_study_v1/crossing_sparse_track/perception_metrics_summary.md`
+- `outputs/trainval_perception_proxy_study_v1/delayed_track/perception_metrics_summary.md`
+- `outputs/trainval_perception_proxy_study_v1/oracle_tracking/perception_case_metrics.csv`
+
+### External Official Baseline Example
+
+The repository now also supports direct evaluation of official `nuScenes` prediction JSON. Because official files such as `results_val_megvii.json` only cover the validation split, the recommended path is to filter the perception benchmark to the covered subset before scoring.
+
+Local example on:
+
+- prediction file: `external_predictions/nuscenes_official/megvii_tracking/unpacked/results_val_megvii.json`
+- aligned output: `outputs/external_megvii_tracking_eval_covered`
+- coverage mode: `full_window`
+
+Coverage summary:
+
+| Quantity | Value |
+| --- | --- |
+| Original slices | 8 |
+| Anchor-covered slices | 2 |
+| Full-window-covered slices | 2 |
+
+Aligned result snapshot:
+
+| Profile | Cases | Anchor Recall | Full Track | Mean Event Recall | Mean Contiguous Coverage | Mean Center Error | Mean First Match Lag |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `megvii_tracking_val_covered` | 2 | 1/2 | 1/2 | 0.500 | 0.500 | 0.271 | 2.50 |
+
+Observed behavior on the aligned subset:
+
+- the covered subset currently contains one `stopped_lead` slice and one `oncoming` slice
+- the `stopped_lead` slice is tracked successfully with a center error of `0.271 m`
+- the `oncoming` slice is missed entirely, so this external example primarily demonstrates the adapter and coverage-alignment path
+
+### External Official Tracking Comparison
+
+The repository also supports direct comparison across multiple external evaluation outputs.
+
+Local comparison on the shared covered subset:
+
+| Profile | Cases | Anchor Recall | Full Track | Mean Event Recall | Mean Contiguous Coverage | Mean Center Error |
+| --- | --- | --- | --- | --- | --- | --- |
+| `pointpillars_tracking_val_covered` | 2 | 1/2 | 1/2 | 0.600 | 0.600 | 0.323 |
+| `megvii_tracking_val_covered` | 2 | 1/2 | 1/2 | 0.500 | 0.500 | 0.271 |
+
+Observed comparison signal:
+
+- both methods solve the `stopped_lead` slice on the aligned subset
+- `PointPillars` achieves partial event recall on the `oncoming` slice (`0.200`), whereas the current `Megvii` result misses it completely
+- `Megvii` remains slightly tighter on center localization for the one successful slice
+
+The detailed local comparison export is:
+
+- `outputs/external_official_tracking_comparison/perception_comparison_summary.md`
+
 ## Why These Results Matter
 
 These results indicate:
@@ -122,8 +215,9 @@ These results indicate:
 - planner improvements should be measured against scene-level and event-level supervision, not only retrieval score
 - deterministic parsing remains a strong baseline on tightly specified scenario-mining queries
 - `LLM` and `hybrid` profiles remain informative because they expose signal divergence and paraphrase sensitivity that the benchmark can quantify
+- mined scenario anchors can also support perception-side evaluation without converting the repository into a full detector-training stack
 
-Accordingly, the repository functions both as a retrieval toolkit and as a benchmark design environment for reference-aware studies of planner robustness.
+The repository therefore serves both as a retrieval toolkit and as a benchmark design environment for reference-aware studies of planner robustness.
 
 ## Counterfactual Benchmark Track
 

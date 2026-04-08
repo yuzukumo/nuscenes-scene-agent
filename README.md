@@ -30,6 +30,7 @@ It is not a driving policy, an end-to-end training stack, or a simulator-first p
 - Build benchmark suites and failure-analysis artifacts for research and evaluation.
 - Compare `rule_only`, `llm_planner`, and `hybrid_agent` on the same risky-scene benchmark.
 - Generate counterfactual benchmark variants anchored to validated reference cases.
+- Evaluate scenario-conditioned perception slices derived from mined risk cases.
 
 ## Example Outputs
 
@@ -71,6 +72,7 @@ The validation and reporting pipeline now exports structured scenario-mining fie
 - scene-level reference fields for scenario mining benchmarks
 - reference-aware benchmark fields for contrastive evaluation
 - counterfactual benchmark groups anchored to validated cases
+- scenario-conditioned perception slices with event-window actor tracks in ego coordinates
 
 ## Scenario Mining Benchmark Generation
 
@@ -150,7 +152,107 @@ Local `v1.0-trainval` snapshot:
 | `llm_planner` | `16/16` | `12/16` | `12/16` | `12/16` | `6/8` | `0.963` |
 | `hybrid_agent` | `16/16` | `13/16` | `13/16` | `13/16` | `6/8` | `1.000` |
 
-In the current local evaluation, all three profiles retrieve high-scoring risky cases, but the deterministic baseline remains strongest on scene-level and actor-level grounding. A detailed summary is provided in [docs/benchmark_snapshot.md](docs/benchmark_snapshot.md).
+In local evaluation, all three profiles retrieve high-scoring risky cases, but the deterministic baseline remains strongest on scene-level and actor-level grounding. A detailed summary is provided in [docs/benchmark_snapshot.md](docs/benchmark_snapshot.md).
+
+## Scenario-Conditioned Perception Slice Evaluation
+
+The repository also exposes a perception-oriented benchmark layer derived from validated scenario-mining anchors. Instead of training a detector inside this repository, the benchmark exports short event-window actor tracks that can be used to evaluate external BEV detection or tracking outputs on mined risk slices.
+
+Generate the perception-slice benchmark:
+
+```bash
+python -m nusc_scene_agent generate-perception-benchmark \
+  --config benchmarks/trainval_scenario_mining_v1.yaml \
+  --db artifacts/index/v1.0-trainval.sqlite \
+  --output benchmarks/trainval_perception_slices_v1.json
+```
+
+Run the built-in proxy study:
+
+```bash
+python -m nusc_scene_agent run-proxy-perception-study \
+  --benchmark benchmarks/trainval_perception_slices_v1.json \
+  --output outputs/trainval_perception_proxy_study_v1
+```
+
+Evaluate official `nuScenes` tracking or detection outputs:
+
+```bash
+python -m nusc_scene_agent evaluate-nuscenes-predictions-covered \
+  --benchmark benchmarks/trainval_perception_slices_v1.json \
+  --db artifacts/index/v1.0-trainval.sqlite \
+  --input /path/to/tracking_results.json \
+  --task tracking \
+  --coverage-mode full_window \
+  --output outputs/external_tracking_eval
+```
+
+For split-specific prediction files such as official `results_val_*.json`, the `covered` command is the recommended entry point because it first filters the benchmark to the subset that is actually covered by the prediction file.
+
+This exports:
+
+- `benchmarks/trainval_perception_slices_v1.json`
+- `outputs/trainval_perception_proxy_study_v1/perception_comparison_summary.md`
+- `outputs/trainval_perception_proxy_study_v1/perception_comparison_summary.html`
+- `outputs/trainval_perception_proxy_study_v1/perception_leaderboard.csv`
+- per-profile `JSON`, `Markdown`, `HTML`, and `CSV` summaries under `oracle_tracking`, `crossing_sparse_track`, and `delayed_track`
+- benchmark cases with `risk_facets` such as distance band, TTC band, map relation, and occlusion proxy
+- aligned external-evaluation exports such as `adapted_predictions.json` and `filtered_benchmark.json`
+
+Local `v1.0-trainval` snapshot:
+
+| Profile | Anchor Recall | Full Track | Mean Event Recall | Mean Contiguous Coverage | Mean Center Error |
+| --- | --- | --- | --- | --- | --- |
+| `oracle_tracking` | `8/8` | `8/8` | `1.000` | `1.000` | `0.000` |
+| `crossing_sparse_track` | `8/8` | `6/8` | `0.884` | `0.789` | `0.151` |
+| `delayed_track` | `8/8` | `0/8` | `0.691` | `0.691` | `0.403` |
+
+The slice set contains `8` anchored cases spanning `stopped_lead`, `crossing`, `oncoming`, `cut_in`, and close-proximity interactions. Each case carries a compact `risk_facets` block with distance band, TTC band, visibility band, map relation, and occlusion proxy labels.
+
+In the local proxy study:
+
+- temporal sparsity is concentrated on the two `crossing` slices, which appear as `crossing_emergence` cases in the risk breakdown
+- `near_range` slices regress under sparse tracking, while `critical_range` slices remain stable in the current proxy setup
+- `large_lead_occluder` slices remain stable under sparse tracking but fail under delayed initialization, which separates fragmentation from track warm-up behavior
+- official `nuScenes` prediction JSON can be evaluated through the adapter path without manual format conversion
+
+Local official-baseline example:
+
+- downloaded file: `external_predictions/nuscenes_official/megvii_tracking/unpacked/results_val_megvii.json`
+- aligned evaluation output: `outputs/external_megvii_tracking_eval_covered`
+- coverage-aligned subset size: `2 / 8` slices
+- local result on that subset: `anchor recall 1/2`, `full-track success 1/2`, `mean event recall 0.500`
+
+Add a second official baseline and compare them:
+
+```bash
+python -m nusc_scene_agent evaluate-nuscenes-predictions-covered \
+  --benchmark benchmarks/trainval_perception_slices_v1.json \
+  --db artifacts/index/v1.0-trainval.sqlite \
+  --input external_predictions/nuscenes_official/pointpillars_tracking/unpacked/results_val_pointpillars.json \
+  --task tracking \
+  --profile-name pointpillars_tracking_val_covered \
+  --coverage-mode full_window \
+  --output outputs/external_pointpillars_tracking_eval_covered
+
+python -m nusc_scene_agent compare-perception-evaluations \
+  --eval-dir outputs/external_megvii_tracking_eval_covered \
+  --eval-dir outputs/external_pointpillars_tracking_eval_covered \
+  --output outputs/external_official_tracking_comparison
+```
+
+Local official-baseline comparison on the shared covered subset:
+
+| Profile | Cases | Anchor Recall | Full Track | Mean Event Recall | Mean Contiguous Coverage | Mean Center Error |
+| --- | --- | --- | --- | --- | --- | --- |
+| `pointpillars_tracking_val_covered` | `2` | `1/2` | `1/2` | `0.600` | `0.600` | `0.323` |
+| `megvii_tracking_val_covered` | `2` | `1/2` | `1/2` | `0.500` | `0.500` | `0.271` |
+
+On the shared subset, both methods solve the `stopped_lead` slice, while `PointPillars` recovers a partial track on the `oncoming` slice and `Megvii` misses it entirely.
+
+<p align="center">
+  <img src="./assets/perception_slice_results_overview.png" alt="Scenario-conditioned perception slice evaluation overview" width="100%">
+</p>
 
 ## Ablation Track
 
@@ -179,7 +281,7 @@ Regenerate the figure used in this README:
 python scripts/generate_paper_figures.py
 ```
 
-Current local `hybrid` ablation snapshot:
+Local `hybrid` ablation snapshot:
 
 | Variant | Pass@1 | Scene@1 | Reference@1 | Scenario Group Success@1 | Mean Event IoU | Mean Best Score |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -188,7 +290,7 @@ Current local `hybrid` ablation snapshot:
 | `no_map_context` | `12/16` | `7/16` | `7/16` | `3/8` | `0.636` | `79.97` |
 | `no_event_localization` | `16/16` | `13/16` | `13/16` | `6/8` | `0.000` | `92.67` |
 
-In the current local ablation, the map-aware validator is the dominant component for this benchmark. Reranking does not change the final ranking on the present query set, while event localization affects localization-aware metrics rather than retrieval success.
+In local ablation, the map-aware validator is the dominant component for this benchmark. Reranking does not change the final ranking on this query set, while event localization affects localization-aware metrics rather than retrieval success.
 
 ## Data Policy
 
@@ -200,7 +302,7 @@ This repository does **not** include:
 - local `SQLite` artifacts
 - generated benchmark outputs
 
-These directories are excluded from version control through `.gitignore` so the repository remains lightweight.
+These directories are excluded from version control through `.gitignore` to keep the repository compact.
 
 Download links are listed here:
 
@@ -278,7 +380,7 @@ Run one query:
 
 ```bash
 python -m nusc_scene_agent query \
-  "pedestrian crossing very close in front of ego lane and risky" \
+  "pedestrian crossing at close range ahead of ego lane" \
   --db artifacts/index/v1.0-mini.sqlite \
   --output outputs/demo_query \
   --query-mode rule
@@ -351,7 +453,7 @@ Run a query through `LangGraph`:
 
 ```bash
 python -m nusc_scene_agent langgraph-query \
-  "pedestrian crossing very close in front of ego lane and risky" \
+  "pedestrian crossing at close range ahead of ego lane" \
   --db artifacts/index/v1.0-mini.sqlite \
   --output outputs/langgraph_query \
   --query-mode hybrid \
@@ -395,7 +497,7 @@ For generated benchmarks with `reference_case_keys`, the metrics layer reports:
 
 ## Benchmark Snapshot
 
-Current local snapshot on `v1.0-trainval + map expansion`:
+Local snapshot on `v1.0-trainval + map expansion`:
 
 ### Core Suite
 
@@ -420,7 +522,7 @@ Current local snapshot on `v1.0-trainval + map expansion`:
 Additional observations:
 
 - planner signal divergence: `12 / 16`
-- hybrid arbitration improves robustness over naive planner-only behavior
+- hybrid arbitration improves performance relative to the planner-only profile
 - hard-case taxonomy exposes overlap, borderline, and behavior-gap failure modes
 
 More context:
@@ -448,7 +550,7 @@ Large local directories are intentionally not tracked:
 
 ## Command Surface
 
-The CLI currently supports:
+The CLI supports:
 
 - `inspect-archives`
 - `prepare-data`
@@ -457,8 +559,20 @@ The CLI currently supports:
 - `langgraph-query`
 - `benchmark`
 - `benchmark-compare`
+- `benchmark-ablate`
+- `build-gallery`
 - `generate-counterfactual-benchmark`
 - `generate-scenario-mining-benchmark`
+- `generate-perception-benchmark`
+- `generate-proxy-perception-predictions`
+- `adapt-nuscenes-predictions`
+- `filter-perception-benchmark`
+- `evaluate-perception-predictions`
+- `run-proxy-perception-study`
+- `evaluate-nuscenes-predictions`
+- `evaluate-nuscenes-predictions-covered`
+- `compare-perception-evaluations`
+- `enrich-case-library`
 - `demo`
 
 These commands cover archive inspection, dataset preparation, indexing, retrieval, validation, and benchmark export.

@@ -17,7 +17,7 @@ The target workflow is:
 
 - parse `nuScenes` samples, annotations, ego poses, and map metadata
 - build a compact `SQLite` index for fast candidate retrieval
-- keep the runtime lightweight for repeated experiments
+- keep the runtime compact for repeated experiments
 
 ### 2. Query planning
 
@@ -51,6 +51,7 @@ The target workflow is:
 - export leaderboard-style HTML and CSV artifacts for profile comparison and behavior-level failure analysis
 - export static benchmark browsers that link query summaries, case reports, and evidence figures across profiles
 - support explicit ablation studies over reranking, map context, and event localization
+- export scenario-conditioned perception slices and model-agnostic evaluation summaries for external BEV tracking outputs
 
 ## 6. Counterfactual Benchmark Generation
 
@@ -84,6 +85,33 @@ That allows the metrics layer to move beyond generic retrieval scores and report
 - event-window overlap
 - peak-sample localization error
 
+## 8. Scenario-Conditioned Perception Benchmark Layer
+
+The repository also derives a compact perception benchmark from scenario-mining anchors.
+
+This layer exports:
+
+- short event-window actor trajectories in ego coordinates
+- anchor sample indices and event-window bounds
+- behavior and actor labels inherited from validated scenario-mining cases
+- benchmark-side risk facets such as distance band, TTC band, visibility band, map relation, and occlusion proxy
+
+That makes it possible to score external detector or tracker outputs on mined risk slices with metrics such as:
+
+- anchor recall
+- full-track success
+- event recall
+- contiguous temporal coverage
+- first-match lag
+- center localization error
+
+The layer also includes:
+
+- an adapter from official `nuScenes` detection and tracking JSON into the local slice-evaluation schema
+- greedy temporal linking for detection-only outputs so short event windows can still be evaluated without native track IDs
+- coverage-aware benchmark filtering so split-specific prediction files can be aligned to the subset they actually cover
+- per-case `CSV`, `JSON`, `Markdown`, and `HTML` exports for downstream analysis
+
 ## Agent Formulation
 
 The repository does not implement a driving policy. The agent component is the orchestration loop:
@@ -111,7 +139,7 @@ This yields a more stable formulation on language-stress benchmarks than naive f
 
 ## Solo-Developer Design Constraints
 
-The repo is intentionally designed to stay lightweight:
+The repository is intentionally designed to remain compact:
 
 - no heavy training pipeline
 - no end-to-end driving stack

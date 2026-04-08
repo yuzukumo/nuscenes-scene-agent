@@ -22,6 +22,19 @@ from nusc_scene_agent.gallery import build_benchmark_gallery, build_comparison_b
 from nusc_scene_agent.indexing import build_index
 from nusc_scene_agent.langgraph_agent import run_langgraph_query_pipeline
 from nusc_scene_agent.llm_client import DEFAULT_TIMEOUT_S, LLMConfig
+from nusc_scene_agent.perception_benchmark import (
+    PROXY_PERCEPTION_PROFILES,
+    PREDICTION_COVERAGE_MODES,
+    adapt_filter_and_evaluate_nuscenes_predictions,
+    adapt_and_evaluate_nuscenes_predictions,
+    adapt_nuscenes_predictions,
+    compare_perception_evaluations,
+    evaluate_perception_predictions,
+    filter_perception_benchmark_by_predictions,
+    generate_perception_benchmark_from_scenario_config,
+    generate_proxy_perception_predictions,
+    run_proxy_perception_study,
+)
 from nusc_scene_agent.pipeline import run_query_pipeline
 from nusc_scene_agent.scenario_mining_benchmark import generate_scenario_mining_benchmark_from_case_library
 from nusc_scene_agent.validation import ValidationConfig
@@ -31,6 +44,8 @@ DEFAULT_DB = Path("artifacts/index/v1.0-mini.sqlite")
 DEFAULT_BENCHMARK = Path("benchmarks/mvp_queries.yaml")
 DEFAULT_TRAINVAL_BENCHMARK = Path("benchmarks/trainval_suite_v1.yaml")
 DEFAULT_COMPARE_BENCHMARK = Path("benchmarks/trainval_language_stress_v1.yaml")
+DEFAULT_SCENARIO_MINING_BENCHMARK = Path("benchmarks/trainval_scenario_mining_v1.yaml")
+DEFAULT_PERCEPTION_BENCHMARK = Path("benchmarks/trainval_perception_slices_v1.json")
 
 
 def _add_llm_connection_args(parser: argparse.ArgumentParser) -> None:
@@ -133,6 +148,100 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Output YAML path for the generated benchmark.",
     )
     generate_scenario_parser.add_argument("--max-cases", type=int, default=8)
+
+    generate_perception_parser = subparsers.add_parser(
+        "generate-perception-benchmark",
+        help="Generate a scenario-conditioned perception benchmark from a scenario mining benchmark.",
+    )
+    generate_perception_parser.add_argument("--config", default=str(DEFAULT_SCENARIO_MINING_BENCHMARK))
+    generate_perception_parser.add_argument("--db", default="artifacts/index/v1.0-trainval.sqlite")
+    generate_perception_parser.add_argument("--output", default=str(DEFAULT_PERCEPTION_BENCHMARK))
+
+    proxy_predictions_parser = subparsers.add_parser(
+        "generate-proxy-perception-predictions",
+        help="Generate proxy prediction tracks for a perception benchmark.",
+    )
+    proxy_predictions_parser.add_argument("--benchmark", default=str(DEFAULT_PERCEPTION_BENCHMARK))
+    proxy_predictions_parser.add_argument("--output", default="outputs/proxy_perception_predictions.json")
+    proxy_predictions_parser.add_argument("--profile", choices=PROXY_PERCEPTION_PROFILES, default="oracle_tracking")
+
+    adapt_predictions_parser = subparsers.add_parser(
+        "adapt-nuscenes-predictions",
+        help="Adapt official nuScenes detection or tracking outputs to the local perception-evaluation schema.",
+    )
+    adapt_predictions_parser.add_argument("--benchmark", default=str(DEFAULT_PERCEPTION_BENCHMARK))
+    adapt_predictions_parser.add_argument("--db", default="artifacts/index/v1.0-trainval.sqlite")
+    adapt_predictions_parser.add_argument("--input", required=True, help="Path to the official nuScenes prediction JSON.")
+    adapt_predictions_parser.add_argument("--output", default="outputs/adapted_nuscenes_predictions.json")
+    adapt_predictions_parser.add_argument("--task", choices=["tracking", "detection"], default="tracking")
+
+    filter_perception_parser = subparsers.add_parser(
+        "filter-perception-benchmark",
+        help="Filter a perception benchmark to cases covered by a prediction file.",
+    )
+    filter_perception_parser.add_argument("--benchmark", default=str(DEFAULT_PERCEPTION_BENCHMARK))
+    filter_perception_parser.add_argument("--predictions", required=True)
+    filter_perception_parser.add_argument("--output", default="outputs/filtered_perception_benchmark.json")
+    filter_perception_parser.add_argument("--coverage-mode", choices=PREDICTION_COVERAGE_MODES, default="full_window")
+
+    evaluate_perception_parser = subparsers.add_parser(
+        "evaluate-perception-predictions",
+        help="Evaluate prediction tracks on the scenario-conditioned perception benchmark.",
+    )
+    evaluate_perception_parser.add_argument("--benchmark", default=str(DEFAULT_PERCEPTION_BENCHMARK))
+    evaluate_perception_parser.add_argument(
+        "--predictions",
+        required=True,
+        help="Prediction JSON with per-sample actor tracks.",
+    )
+    evaluate_perception_parser.add_argument("--output", default="outputs/perception_evaluation")
+    evaluate_perception_parser.add_argument("--profile-name", default="")
+    evaluate_perception_parser.add_argument("--match-distance-m", type=float, default=2.0)
+
+    proxy_study_parser = subparsers.add_parser(
+        "run-proxy-perception-study",
+        help="Run a proxy perception comparison on the scenario-conditioned benchmark.",
+    )
+    proxy_study_parser.add_argument("--benchmark", default=str(DEFAULT_PERCEPTION_BENCHMARK))
+    proxy_study_parser.add_argument("--output", default="outputs/trainval_perception_proxy_study_v1")
+
+    compare_perception_parser = subparsers.add_parser(
+        "compare-perception-evaluations",
+        help="Compare multiple perception evaluation output directories.",
+    )
+    compare_perception_parser.add_argument(
+        "--eval-dir",
+        action="append",
+        default=[],
+        required=True,
+        help="Evaluation directory that contains perception_metrics.json. Repeatable.",
+    )
+    compare_perception_parser.add_argument("--output", default="outputs/perception_comparison")
+
+    evaluate_nuscenes_parser = subparsers.add_parser(
+        "evaluate-nuscenes-predictions",
+        help="Adapt official nuScenes detection or tracking outputs and evaluate them on the perception benchmark.",
+    )
+    evaluate_nuscenes_parser.add_argument("--benchmark", default=str(DEFAULT_PERCEPTION_BENCHMARK))
+    evaluate_nuscenes_parser.add_argument("--db", default="artifacts/index/v1.0-trainval.sqlite")
+    evaluate_nuscenes_parser.add_argument("--input", required=True, help="Path to the official nuScenes prediction JSON.")
+    evaluate_nuscenes_parser.add_argument("--output", default="outputs/nuscenes_perception_eval")
+    evaluate_nuscenes_parser.add_argument("--task", choices=["tracking", "detection"], default="tracking")
+    evaluate_nuscenes_parser.add_argument("--profile-name", default="")
+    evaluate_nuscenes_parser.add_argument("--match-distance-m", type=float, default=2.0)
+
+    evaluate_nuscenes_filtered_parser = subparsers.add_parser(
+        "evaluate-nuscenes-predictions-covered",
+        help="Adapt official nuScenes outputs, filter the benchmark to covered cases, and evaluate the aligned subset.",
+    )
+    evaluate_nuscenes_filtered_parser.add_argument("--benchmark", default=str(DEFAULT_PERCEPTION_BENCHMARK))
+    evaluate_nuscenes_filtered_parser.add_argument("--db", default="artifacts/index/v1.0-trainval.sqlite")
+    evaluate_nuscenes_filtered_parser.add_argument("--input", required=True, help="Path to the official nuScenes prediction JSON.")
+    evaluate_nuscenes_filtered_parser.add_argument("--output", default="outputs/nuscenes_perception_eval_covered")
+    evaluate_nuscenes_filtered_parser.add_argument("--task", choices=["tracking", "detection"], default="tracking")
+    evaluate_nuscenes_filtered_parser.add_argument("--profile-name", default="")
+    evaluate_nuscenes_filtered_parser.add_argument("--match-distance-m", type=float, default=2.0)
+    evaluate_nuscenes_filtered_parser.add_argument("--coverage-mode", choices=PREDICTION_COVERAGE_MODES, default="full_window")
 
     enrich_case_library_parser = subparsers.add_parser(
         "enrich-case-library",
@@ -356,6 +465,108 @@ def main() -> None:
             max_cases=args.max_cases,
         )
         print("Scenario mining benchmark:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "generate-perception-benchmark":
+        metadata = generate_perception_benchmark_from_scenario_config(
+            config_path=Path(args.config),
+            db_path=Path(args.db),
+            output_path=Path(args.output),
+        )
+        print("Perception benchmark:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "generate-proxy-perception-predictions":
+        metadata = generate_proxy_perception_predictions(
+            benchmark_path=Path(args.benchmark),
+            output_path=Path(args.output),
+            profile_name=args.profile,
+        )
+        print("Proxy predictions:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "adapt-nuscenes-predictions":
+        metadata = adapt_nuscenes_predictions(
+            benchmark_path=Path(args.benchmark),
+            db_path=Path(args.db),
+            input_path=Path(args.input),
+            output_path=Path(args.output),
+            task_type=args.task,
+        )
+        print("Adapted predictions:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "filter-perception-benchmark":
+        metadata = filter_perception_benchmark_by_predictions(
+            benchmark_path=Path(args.benchmark),
+            predictions_path=Path(args.predictions),
+            output_path=Path(args.output),
+            coverage_mode=args.coverage_mode,
+        )
+        print("Filtered perception benchmark:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "evaluate-perception-predictions":
+        summary = evaluate_perception_predictions(
+            benchmark_path=Path(args.benchmark),
+            predictions_path=Path(args.predictions),
+            output_dir=Path(args.output),
+            profile_name=args.profile_name,
+            match_distance_m=args.match_distance_m,
+        )
+        print("Perception evaluation:", Path(args.output).resolve())
+        print(json.dumps(summary["overview"], indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "evaluate-nuscenes-predictions":
+        metadata = adapt_and_evaluate_nuscenes_predictions(
+            benchmark_path=Path(args.benchmark),
+            db_path=Path(args.db),
+            input_path=Path(args.input),
+            output_dir=Path(args.output),
+            task_type=args.task,
+            profile_name=args.profile_name,
+            match_distance_m=args.match_distance_m,
+        )
+        print("nuScenes perception evaluation:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "evaluate-nuscenes-predictions-covered":
+        metadata = adapt_filter_and_evaluate_nuscenes_predictions(
+            benchmark_path=Path(args.benchmark),
+            db_path=Path(args.db),
+            input_path=Path(args.input),
+            output_dir=Path(args.output),
+            task_type=args.task,
+            profile_name=args.profile_name,
+            match_distance_m=args.match_distance_m,
+            coverage_mode=args.coverage_mode,
+        )
+        print("Covered nuScenes perception evaluation:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "run-proxy-perception-study":
+        metadata = run_proxy_perception_study(
+            benchmark_path=Path(args.benchmark),
+            output_dir=Path(args.output),
+        )
+        print("Proxy perception study:", Path(args.output).resolve())
+        print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "compare-perception-evaluations":
+        metadata = compare_perception_evaluations(
+            evaluation_dirs=[Path(path) for path in args.eval_dir],
+            output_dir=Path(args.output),
+        )
+        print("Perception comparison:", Path(args.output).resolve())
         print(json.dumps(metadata, indent=2, ensure_ascii=False))
         return
 

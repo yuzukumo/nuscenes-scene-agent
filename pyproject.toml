@@ -5,16 +5,18 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nuscenes-scene-agent"
 version = "0.1.0"
-description = "An agentic toolkit for mining, validating, and benchmarking risky scenes in nuScenes."
+description = "Toolkit for natural-language scene retrieval, validation, and benchmark generation on nuScenes."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = {file = "LICENSE"}
-keywords = ["nuScenes", "autonomous driving", "scene mining", "risk retrieval", "benchmark generation", "agentic retrieval", "corner case mining"]
+keywords = ["nuScenes", "autonomous driving", "scene mining", "risk retrieval", "benchmark generation", "corner case mining"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: Scientific/Engineering :: Information Analysis",
   "Topic :: Scientific/Engineering :: Visualization",
@@ -45,3 +47,6 @@ where = ["src"]
 
 [tool.setuptools]
 include-package-data = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

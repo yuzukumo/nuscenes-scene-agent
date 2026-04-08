@@ -6,6 +6,7 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+.codex
 .coverage
 htmlcov/
 build/
@@ -22,6 +23,7 @@ dist/
 
 artifacts/
 outputs/
+external_predictions/
 data/
 archives/
 maps/

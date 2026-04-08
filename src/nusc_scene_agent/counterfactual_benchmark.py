@@ -92,7 +92,7 @@ def _canonical_positive_query(semantics: Dict[str, object]) -> str:
     behavior = str(semantics["primary_behavior"])
     positions = list(semantics["positions"])
     if behavior == "crossing":
-        return "a {0} crosses directly in front of ego at the crosswalk".format(actor)
+        return "a {0} crosses ahead of ego at a crosswalk".format(actor)
     if behavior == "cut_in":
         side = "the right" if "right" in positions else "the left" if "left" in positions else "the adjacent lane"
         return "a {0} merges into ego lane from {1}".format(actor, side)
@@ -100,7 +100,7 @@ def _canonical_positive_query(semantics: Dict[str, object]) -> str:
         return "an oncoming {0} approaches ego in the same corridor".format(actor)
     if behavior == "stopped_lead":
         return "a stopped {0} is blocking ego in lane ahead".format(actor)
-    return "a {0} is very close {1}".format(actor, _position_phrase(positions))
+    return "a {0} is at close range {1}".format(actor, _position_phrase(positions))
 
 
 def _paraphrase_positive_query(semantics: Dict[str, object]) -> str:
@@ -108,15 +108,15 @@ def _paraphrase_positive_query(semantics: Dict[str, object]) -> str:
     behavior = str(semantics["primary_behavior"])
     positions = list(semantics["positions"])
     if behavior == "crossing":
-        return "a {0} steps into ego's path right ahead".format(actor)
+        return "a {0} crosses into ego path ahead".format(actor)
     if behavior == "cut_in":
         side = "the passenger side" if "right" in positions else "the driver's side" if "left" in positions else "an adjacent lane"
-        return "a {0} noses in from {1}".format(actor, side)
+        return "a {0} merges from {1} into ego lane".format(actor, side)
     if behavior == "oncoming":
-        return "a {0} comes straight at ego".format(actor)
+        return "a {0} approaches ego in the opposite direction".format(actor)
     if behavior == "stopped_lead":
-        return "the lead {0} is just sitting in ego's lane".format(actor)
-    return "a {0} is uncomfortably close {1}".format(actor, _position_phrase(positions))
+        return "the lead {0} is stationary in ego lane".format(actor)
+    return "a {0} remains at close range {1}".format(actor, _position_phrase(positions))
 
 
 def _hard_negative_actor_query(semantics: Dict[str, object]) -> Tuple[str, str]:

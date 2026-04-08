@@ -1,0 +1,816 @@
+{
+  "metadata": {
+    "generator": "perception_slice_benchmark_generator_v1",
+    "source_scenario_benchmark": "benchmarks/trainval_scenario_mining_v1.yaml",
+    "db_path": "artifacts/index/v1.0-trainval.sqlite",
+    "case_count": 8
+  },
+  "cases": [
+    {
+      "benchmark_group": "scenario_08461b5c6f364b1aa0549f44f84ac3be_ddf5942930ab463fbaf402fa52d0c9bc",
+      "reference_case_key": "08461b5c6f364b1aa0549f44f84ac3be:ddf5942930ab463fbaf402fa52d0c9bc",
+      "reference_scene_name": "scene-1067",
+      "scene_name": "scene-1067",
+      "scene_token": "16be583c31a2403caa6c158bb55ae616",
+      "instance_token": "ddf5942930ab463fbaf402fa52d0c9bc",
+      "category_name": "vehicle.car",
+      "category_group": "vehicle",
+      "location": "singapore-hollandvillage",
+      "primary_behavior": "oncoming",
+      "behaviors": [
+        "oncoming"
+      ],
+      "actors": [
+        "vehicle"
+      ],
+      "tags": [
+        "scenario_mining",
+        "canonical",
+        "oncoming",
+        "paraphrase"
+      ],
+      "source_query_ids": [
+        "scenario_08461b5c6f364b1aa0549f44f84ac3be_ddf5942930ab463fbaf402fa52d0c9bc_scenario_canonical",
+        "scenario_08461b5c6f364b1aa0549f44f84ac3be_ddf5942930ab463fbaf402fa52d0c9bc_scenario_paraphrase"
+      ],
+      "source_query_texts": [
+        "an oncoming vehicle approaches ego in the same corridor",
+        "a vehicle comes straight at ego"
+      ],
+      "anchor_sample_token": "08461b5c6f364b1aa0549f44f84ac3be",
+      "anchor_sample_idx": 25,
+      "event_start_sample_idx": 21,
+      "event_end_sample_idx": 25,
+      "event_peak_sample_idx": 25,
+      "frame_count": 5,
+      "frames": [
+        {
+          "sample_token": "28e33ad25c0943b49b57f8f1346d5bd2",
+          "sample_idx": 21,
+          "timestamp_us": 1542799592947113,
+          "x_ego": 31.193790934786648,
+          "y_ego": -2.899162478982589,
+          "distance": 31.328225866823644
+        },
+        {
+          "sample_token": "65e91e3a03fe4fbba79fd17c886638e7",
+          "sample_idx": 22,
+          "timestamp_us": 1542799593447547,
+          "x_ego": 23.10022851873032,
+          "y_ego": -2.940750529216416,
+          "distance": 23.286660801683187
+        },
+        {
+          "sample_token": "03bfef5ffadf4203ba4ca4a239ee620f",
+          "sample_idx": 23,
+          "timestamp_us": 1542799593947993,
+          "x_ego": 15.03787447004072,
+          "y_ego": -2.9019658469949263,
+          "distance": 15.3153215556784
+        },
+        {
+          "sample_token": "165cc8e66a074fbfb489437c04a7315a",
+          "sample_idx": 24,
+          "timestamp_us": 1542799594448390,
+          "x_ego": 7.356336325766165,
+          "y_ego": -2.7450509325772146,
+          "distance": 7.851814361039739
+        },
+        {
+          "sample_token": "08461b5c6f364b1aa0549f44f84ac3be",
+          "sample_idx": 25,
+          "timestamp_us": 1542799594948263,
+          "x_ego": 0.046810954449597375,
+          "y_ego": -2.694712215615823,
+          "distance": 2.695118771120416
+        }
+      ],
+      "anchor_visibility": 4,
+      "min_distance_m": 2.695,
+      "min_ttc_s": 0.003,
+      "map_support": {
+        "available": true,
+        "actor_on_crosswalk_any": false,
+        "actor_on_walkway_any": false,
+        "actor_uses_ego_lane_any": false,
+        "shares_lane_at_anchor": false
+      },
+      "risk_facets": {
+        "distance_band": "critical_range",
+        "ttc_band": "urgent_ttc",
+        "visibility_band": "clear_visibility",
+        "map_relation": "opposite_direction_like",
+        "occlusion_proxy": "nominal_exposure"
+      }
+    },
+    {
+      "benchmark_group": "scenario_0b9f33809d7f4e59a9fcf1703c896721_077998202a8f48479652b58e8c4ba3c5",
+      "reference_case_key": "0b9f33809d7f4e59a9fcf1703c896721:077998202a8f48479652b58e8c4ba3c5",
+      "reference_scene_name": "scene-0991",
+      "scene_name": "scene-0991",
+      "scene_token": "c2d5a5e7f7dc4e12b967fff22a0e1bf1",
+      "instance_token": "077998202a8f48479652b58e8c4ba3c5",
+      "category_name": "human.pedestrian.adult",
+      "category_group": "pedestrian",
+      "location": "singapore-onenorth",
+      "primary_behavior": "proximity",
+      "behaviors": [],
+      "actors": [
+        "pedestrian"
+      ],
+      "tags": [
+        "scenario_mining",
+        "canonical",
+        "proximity",
+        "paraphrase"
+      ],
+      "source_query_ids": [
+        "scenario_0b9f33809d7f4e59a9fcf1703c896721_077998202a8f48479652b58e8c4ba3c5_scenario_canonical",
+        "scenario_0b9f33809d7f4e59a9fcf1703c896721_077998202a8f48479652b58e8c4ba3c5_scenario_paraphrase"
+      ],
+      "source_query_texts": [
+        "a pedestrian is very close ahead of ego",
+        "a pedestrian is uncomfortably close ahead of ego"
+      ],
+      "anchor_sample_token": "0b9f33809d7f4e59a9fcf1703c896721",
+      "anchor_sample_idx": 31,
+      "event_start_sample_idx": 27,
+      "event_end_sample_idx": 35,
+      "event_peak_sample_idx": 31,
+      "frame_count": 9,
+      "frames": [
+        {
+          "sample_token": "7a8188fded5b4e53b449effb2739d3b6",
+          "sample_idx": 27,
+          "timestamp_us": 1537845625648711,
+          "x_ego": 0.8185699284006631,
+          "y_ego": -1.2688979156445157,
+          "distance": 1.5100194197456083
+        },
+        {
+          "sample_token": "9b9810d363d54270b87ce39c3fb6bc72",
+          "sample_idx": 28,
+          "timestamp_us": 1537845626148565,
+          "x_ego": 0.6860347395427766,
+          "y_ego": -1.274142128300781,
+          "distance": 1.4470942702430858
+        },
+        {
+          "sample_token": "6177c2d37fdb404a89ef87b92309eac9",
+          "sample_idx": 29,
+          "timestamp_us": 1537845626647894,
+          "x_ego": 0.4957258998596643,
+          "y_ego": -1.0706133846725834,
+          "distance": 1.1798123525509296
+        },
+        {
+          "sample_token": "0d7fd77e6cee477c8efd50a0543a1153",
+          "sample_idx": 30,
+          "timestamp_us": 1537845627147765,
+          "x_ego": 0.3939134228892982,
+          "y_ego": -1.2059245212502674,
+          "distance": 1.2686298655183275
+        },
+        {
+          "sample_token": "0b9f33809d7f4e59a9fcf1703c896721",
+          "sample_idx": 31,
+          "timestamp_us": 1537845627647097,
+          "x_ego": 0.176065368311086,
+          "y_ego": -1.334527286521137,
+          "distance": 1.3460914130875314
+        },
+        {
+          "sample_token": "d73f323655ca4879a0eb96f54f5ceaae",
+          "sample_idx": 32,
+          "timestamp_us": 1537845628146444,
+          "x_ego": -0.1352209538665079,
+          "y_ego": -1.2994570971931125,
+          "distance": 1.306473671303834
+        },
+        {
+          "sample_token": "44a6ed1c64cf47e58d11e25757801069",
+          "sample_idx": 33,
+          "timestamp_us": 1537845628646841,
+          "x_ego": -0.3492217407521281,
+          "y_ego": -1.0096028523772986,
+          "distance": 1.0682947831672323
+        },
+        {
+          "sample_token": "455e2ea8db5242c4b7c32daa1e6fab76",
+          "sample_idx": 34,
+          "timestamp_us": 1537845629147831,
+          "x_ego": -0.6586886439415736,
+          "y_ego": -0.8249065801331028,
+          "distance": 1.0556237945425824
+        },
+        {
+          "sample_token": "19814035e3bb4ede88f766c131360067",
+          "sample_idx": 35,
+          "timestamp_us": 1537845629698032,
+          "x_ego": -0.884528701401166,
+          "y_ego": -0.35574721537480514,
+          "distance": 0.9533871746826476
+        }
+      ],
+      "anchor_visibility": 4,
+      "min_distance_m": 0.953,
+      "min_ttc_s": 0.332,
+      "map_support": {
+        "available": true,
+        "actor_on_crosswalk_any": false,
+        "actor_on_walkway_any": false,
+        "actor_uses_ego_lane_any": true,
+        "shares_lane_at_anchor": true
+      },
+      "risk_facets": {
+        "distance_band": "critical_range",
+        "ttc_band": "urgent_ttc",
+        "visibility_band": "clear_visibility",
+        "map_relation": "shared_lane_supported",
+        "occlusion_proxy": "nominal_exposure"
+      }
+    },
+    {
+      "benchmark_group": "scenario_536eeb9e7c8d4556a7aeb4bcde0eba7e_31ee8f4b2d284c3a99d8649973281683",
+      "reference_case_key": "536eeb9e7c8d4556a7aeb4bcde0eba7e:31ee8f4b2d284c3a99d8649973281683",
+      "reference_scene_name": "scene-0419",
+      "scene_name": "scene-0419",
+      "scene_token": "8c84164e752a4ab69d039a07c898f7af",
+      "instance_token": "31ee8f4b2d284c3a99d8649973281683",
+      "category_name": "vehicle.bicycle",
+      "category_group": "bicycle",
+      "location": "singapore-hollandvillage",
+      "primary_behavior": "crossing",
+      "behaviors": [
+        "crossing"
+      ],
+      "actors": [
+        "bicycle"
+      ],
+      "tags": [
+        "scenario_mining",
+        "canonical",
+        "crossing",
+        "paraphrase"
+      ],
+      "source_query_ids": [
+        "scenario_536eeb9e7c8d4556a7aeb4bcde0eba7e_31ee8f4b2d284c3a99d8649973281683_scenario_canonical",
+        "scenario_536eeb9e7c8d4556a7aeb4bcde0eba7e_31ee8f4b2d284c3a99d8649973281683_scenario_paraphrase"
+      ],
+      "source_query_texts": [
+        "a bike rider crosses directly in front of ego at the crosswalk",
+        "a bike rider steps into ego's path right ahead"
+      ],
+      "anchor_sample_token": "536eeb9e7c8d4556a7aeb4bcde0eba7e",
+      "anchor_sample_idx": 13,
+      "event_start_sample_idx": 9,
+      "event_end_sample_idx": 14,
+      "event_peak_sample_idx": 13,
+      "frame_count": 6,
+      "frames": [
+        {
+          "sample_token": "af693f155c8f4051babbf54264c4daf0",
+          "sample_idx": 9,
+          "timestamp_us": 1538034048198566,
+          "x_ego": 14.254797154880862,
+          "y_ego": -5.0192238055497,
+          "distance": 15.11263873507854
+        },
+        {
+          "sample_token": "fd1aa05d5d954166b879a4d1c74c9ee2",
+          "sample_idx": 10,
+          "timestamp_us": 1538034048699009,
+          "x_ego": 10.99866357751148,
+          "y_ego": -5.574124667745764,
+          "distance": 12.330509571905349
+        },
+        {
+          "sample_token": "b9209a75c843499e85fee9589802f00c",
+          "sample_idx": 11,
+          "timestamp_us": 1538034049198874,
+          "x_ego": 7.808244591426728,
+          "y_ego": -5.603693475859018,
+          "distance": 9.610934614850404
+        },
+        {
+          "sample_token": "ace5a5729dec49d59e0cfa0eb91ca016",
+          "sample_idx": 12,
+          "timestamp_us": 1538034049698208,
+          "x_ego": 4.4985427656488355,
+          "y_ego": -5.550040166217514,
+          "distance": 7.14421674230277
+        },
+        {
+          "sample_token": "536eeb9e7c8d4556a7aeb4bcde0eba7e",
+          "sample_idx": 13,
+          "timestamp_us": 1538034050197523,
+          "x_ego": 0.9393021244979991,
+          "y_ego": -5.566713135581267,
+          "distance": 5.645403760134387
+        },
+        {
+          "sample_token": "53a4ed7909644f3db814ef15ec229ae3",
+          "sample_idx": 14,
+          "timestamp_us": 1538034050697390,
+          "x_ego": -2.796038215948556,
+          "y_ego": -5.508886194083061,
+          "distance": 6.177835932137057
+        }
+      ],
+      "anchor_visibility": 4,
+      "min_distance_m": 5.645,
+      "min_ttc_s": 0.129,
+      "map_support": {
+        "available": true,
+        "actor_on_crosswalk_any": false,
+        "actor_on_walkway_any": true,
+        "actor_uses_ego_lane_any": false,
+        "shares_lane_at_anchor": false
+      },
+      "risk_facets": {
+        "distance_band": "near_range",
+        "ttc_band": "urgent_ttc",
+        "visibility_band": "clear_visibility",
+        "map_relation": "crosswalk_like",
+        "occlusion_proxy": "crossing_emergence"
+      }
+    },
+    {
+      "benchmark_group": "scenario_632a1f8aea9146aaa9c558727da492c7_a745648fa2324541b94aa6e022c4b280",
+      "reference_case_key": "632a1f8aea9146aaa9c558727da492c7:a745648fa2324541b94aa6e022c4b280",
+      "reference_scene_name": "scene-0122",
+      "scene_name": "scene-0122",
+      "scene_token": "e6cb595f6df44b3999db28c65f2244ac",
+      "instance_token": "a745648fa2324541b94aa6e022c4b280",
+      "category_name": "vehicle.car",
+      "category_group": "vehicle",
+      "location": "singapore-onenorth",
+      "primary_behavior": "cut_in",
+      "behaviors": [
+        "cut_in"
+      ],
+      "actors": [
+        "vehicle"
+      ],
+      "tags": [
+        "scenario_mining",
+        "canonical",
+        "cut_in",
+        "paraphrase"
+      ],
+      "source_query_ids": [
+        "scenario_632a1f8aea9146aaa9c558727da492c7_a745648fa2324541b94aa6e022c4b280_scenario_canonical",
+        "scenario_632a1f8aea9146aaa9c558727da492c7_a745648fa2324541b94aa6e022c4b280_scenario_paraphrase"
+      ],
+      "source_query_texts": [
+        "a vehicle merges into ego lane from the right",
+        "a vehicle noses in from the passenger side"
+      ],
+      "anchor_sample_token": "632a1f8aea9146aaa9c558727da492c7",
+      "anchor_sample_idx": 16,
+      "event_start_sample_idx": 15,
+      "event_end_sample_idx": 17,
+      "event_peak_sample_idx": 16,
+      "frame_count": 3,
+      "frames": [
+        {
+          "sample_token": "8c3ce3f9d23c4572b67cdbaaef91c57e",
+          "sample_idx": 15,
+          "timestamp_us": 1533112623648059,
+          "x_ego": 9.120292312009951,
+          "y_ego": -7.149913752514635,
+          "distance": 11.588830766082735
+        },
+        {
+          "sample_token": "632a1f8aea9146aaa9c558727da492c7",
+          "sample_idx": 16,
+          "timestamp_us": 1533112624047864,
+          "x_ego": 5.225151243596429,
+          "y_ego": -6.010843533812817,
+          "distance": 7.964448851391832
+        },
+        {
+          "sample_token": "1c2286099e7242989596c17fed905491",
+          "sample_idx": 17,
+          "timestamp_us": 1533112624647272,
+          "x_ego": -0.4845861197667318,
+          "y_ego": -4.637405588891625,
+          "distance": 4.662655284637054
+        }
+      ],
+      "anchor_visibility": 4,
+      "min_distance_m": 4.663,
+      "min_ttc_s": 0.548,
+      "map_support": {
+        "available": true,
+        "actor_on_crosswalk_any": false,
+        "actor_on_walkway_any": false,
+        "actor_uses_ego_lane_any": false,
+        "shares_lane_at_anchor": false
+      },
+      "risk_facets": {
+        "distance_band": "near_range",
+        "ttc_band": "urgent_ttc",
+        "visibility_band": "clear_visibility",
+        "map_relation": "merge_like",
+        "occlusion_proxy": "nominal_exposure"
+      }
+    },
+    {
+      "benchmark_group": "scenario_cbbd333271434197b1bd8302ae03100f_5206449eec0d42229bd1a12f1769f233",
+      "reference_case_key": "cbbd333271434197b1bd8302ae03100f:5206449eec0d42229bd1a12f1769f233",
+      "reference_scene_name": "scene-0271",
+      "scene_name": "scene-0271",
+      "scene_token": "8180a1dbbba3479bb0c7f4ff6e9a3f0e",
+      "instance_token": "5206449eec0d42229bd1a12f1769f233",
+      "category_name": "vehicle.car",
+      "category_group": "vehicle",
+      "location": "singapore-onenorth",
+      "primary_behavior": "stopped_lead",
+      "behaviors": [
+        "stopped_lead"
+      ],
+      "actors": [
+        "vehicle"
+      ],
+      "tags": [
+        "scenario_mining",
+        "canonical",
+        "stopped_lead",
+        "paraphrase"
+      ],
+      "source_query_ids": [
+        "scenario_cbbd333271434197b1bd8302ae03100f_5206449eec0d42229bd1a12f1769f233_scenario_canonical",
+        "scenario_cbbd333271434197b1bd8302ae03100f_5206449eec0d42229bd1a12f1769f233_scenario_paraphrase"
+      ],
+      "source_query_texts": [
+        "a stopped vehicle is blocking ego in lane ahead",
+        "the lead vehicle is just sitting in ego's lane"
+      ],
+      "anchor_sample_token": "cbbd333271434197b1bd8302ae03100f",
+      "anchor_sample_idx": 10,
+      "event_start_sample_idx": 6,
+      "event_end_sample_idx": 10,
+      "event_peak_sample_idx": 10,
+      "frame_count": 5,
+      "frames": [
+        {
+          "sample_token": "8b52e309b5144f7880725db89ec38956",
+          "sample_idx": 6,
+          "timestamp_us": 1531281616699187,
+          "x_ego": 5.234471123713405,
+          "y_ego": 2.68109981633728,
+          "distance": 5.8811550030715285
+        },
+        {
+          "sample_token": "54dd93feb4b34fc4b57470531bd79ff5",
+          "sample_idx": 7,
+          "timestamp_us": 1531281617199104,
+          "x_ego": 3.9078921309601355,
+          "y_ego": 2.7734110942925554,
+          "distance": 4.7920173210418575
+        },
+        {
+          "sample_token": "7c3248a9f77341d2ba915b857bd8f287",
+          "sample_idx": 8,
+          "timestamp_us": 1531281617699492,
+          "x_ego": 2.7200860840488303,
+          "y_ego": 2.721367940173991,
+          "distance": 3.8476891468052523
+        },
+        {
+          "sample_token": "9f5b95a0bb20428188d4abae6a0579d1",
+          "sample_idx": 9,
+          "timestamp_us": 1531281618199371,
+          "x_ego": 1.4418999404286978,
+          "y_ego": 2.6719359377268574,
+          "distance": 3.036168159625646
+        },
+        {
+          "sample_token": "cbbd333271434197b1bd8302ae03100f",
+          "sample_idx": 10,
+          "timestamp_us": 1531281618699807,
+          "x_ego": 0.01213755340438638,
+          "y_ego": 2.6558597805146746,
+          "distance": 2.6558875153059662
+        }
+      ],
+      "anchor_visibility": 4,
+      "min_distance_m": 2.656,
+      "min_ttc_s": 0.004,
+      "map_support": {
+        "available": true,
+        "actor_on_crosswalk_any": false,
+        "actor_on_walkway_any": false,
+        "actor_uses_ego_lane_any": true,
+        "shares_lane_at_anchor": true
+      },
+      "risk_facets": {
+        "distance_band": "critical_range",
+        "ttc_band": "urgent_ttc",
+        "visibility_band": "clear_visibility",
+        "map_relation": "shared_lane_supported",
+        "occlusion_proxy": "nominal_exposure"
+      }
+    },
+    {
+      "benchmark_group": "scenario_d35eeb6ffde9481ba3c0264152c57f2f_9cce231a15104d2bb345f933898e4d21",
+      "reference_case_key": "d35eeb6ffde9481ba3c0264152c57f2f:9cce231a15104d2bb345f933898e4d21",
+      "reference_scene_name": "scene-0222",
+      "scene_name": "scene-0222",
+      "scene_token": "129304d659464b0fb3a51c99eaec114a",
+      "instance_token": "9cce231a15104d2bb345f933898e4d21",
+      "category_name": "human.pedestrian.adult",
+      "category_group": "pedestrian",
+      "location": "boston-seaport",
+      "primary_behavior": "crossing",
+      "behaviors": [
+        "crossing"
+      ],
+      "actors": [
+        "pedestrian"
+      ],
+      "tags": [
+        "scenario_mining",
+        "canonical",
+        "crossing",
+        "paraphrase"
+      ],
+      "source_query_ids": [
+        "scenario_d35eeb6ffde9481ba3c0264152c57f2f_9cce231a15104d2bb345f933898e4d21_scenario_canonical",
+        "scenario_d35eeb6ffde9481ba3c0264152c57f2f_9cce231a15104d2bb345f933898e4d21_scenario_paraphrase"
+      ],
+      "source_query_texts": [
+        "a pedestrian crosses directly in front of ego at the crosswalk",
+        "a pedestrian steps into ego's path right ahead"
+      ],
+      "anchor_sample_token": "d35eeb6ffde9481ba3c0264152c57f2f",
+      "anchor_sample_idx": 17,
+      "event_start_sample_idx": 13,
+      "event_end_sample_idx": 19,
+      "event_peak_sample_idx": 17,
+      "frame_count": 7,
+      "frames": [
+        {
+          "sample_token": "9a55d2f548644e5eb356abc8af9df69f",
+          "sample_idx": 13,
+          "timestamp_us": 1532707862546857,
+          "x_ego": 12.700546950732814,
+          "y_ego": -5.24557599575521,
+          "distance": 13.741177546884833
+        },
+        {
+          "sample_token": "206d53b3bb774670886749358f89d85d",
+          "sample_idx": 14,
+          "timestamp_us": 1532707863047304,
+          "x_ego": 9.659808028393172,
+          "y_ego": -5.520392342481294,
+          "distance": 11.125943679541763
+        },
+        {
+          "sample_token": "827af4bcae3a47839e39ee2da53fb008",
+          "sample_idx": 15,
+          "timestamp_us": 1532707863547166,
+          "x_ego": 6.531999487847315,
+          "y_ego": -5.686089122459499,
+          "distance": 8.660174756769624
+        },
+        {
+          "sample_token": "39b2b27015ed4607969ec08175799ae0",
+          "sample_idx": 16,
+          "timestamp_us": 1532707864047604,
+          "x_ego": 3.414543184540662,
+          "y_ego": -5.844598268867507,
+          "distance": 6.768931531899414
+        },
+        {
+          "sample_token": "d35eeb6ffde9481ba3c0264152c57f2f",
+          "sample_idx": 17,
+          "timestamp_us": 1532707864547479,
+          "x_ego": 0.24319365174983432,
+          "y_ego": -6.003922824416875,
+          "distance": 6.008846181573076
+        },
+        {
+          "sample_token": "456f513677ee48fa8a7f608c6253b75f",
+          "sample_idx": 18,
+          "timestamp_us": 1532707864947840,
+          "x_ego": -2.2014834944293398,
+          "y_ego": -6.130016568737894,
+          "distance": 6.513342667881517
+        },
+        {
+          "sample_token": "ce60a4df7d4a4202bfe824763c31f6b5",
+          "sample_idx": 19,
+          "timestamp_us": 1532707865397937,
+          "x_ego": -5.11952758081361,
+          "y_ego": -6.188223161120689,
+          "distance": 8.031417592339587
+        }
+      ],
+      "anchor_visibility": 4,
+      "min_distance_m": 6.009,
+      "min_ttc_s": 0.039,
+      "map_support": {
+        "available": true,
+        "actor_on_crosswalk_any": true,
+        "actor_on_walkway_any": true,
+        "actor_uses_ego_lane_any": false,
+        "shares_lane_at_anchor": false
+      },
+      "risk_facets": {
+        "distance_band": "near_range",
+        "ttc_band": "urgent_ttc",
+        "visibility_band": "clear_visibility",
+        "map_relation": "crosswalk_supported",
+        "occlusion_proxy": "crossing_emergence"
+      }
+    },
+    {
+      "benchmark_group": "scenario_ee06737eaacb4c1db2042e0a9601382b_e5fb9bc8abdd4b72a526e1a025e15162",
+      "reference_case_key": "ee06737eaacb4c1db2042e0a9601382b:e5fb9bc8abdd4b72a526e1a025e15162",
+      "reference_scene_name": "scene-0398",
+      "scene_name": "scene-0398",
+      "scene_token": "b519ec833e23450a8bd3340b67f2516b",
+      "instance_token": "e5fb9bc8abdd4b72a526e1a025e15162",
+      "category_name": "vehicle.bus.rigid",
+      "category_group": "bus",
+      "location": "boston-seaport",
+      "primary_behavior": "stopped_lead",
+      "behaviors": [
+        "stopped_lead"
+      ],
+      "actors": [
+        "bus"
+      ],
+      "tags": [
+        "scenario_mining",
+        "canonical",
+        "stopped_lead",
+        "paraphrase"
+      ],
+      "source_query_ids": [
+        "scenario_ee06737eaacb4c1db2042e0a9601382b_e5fb9bc8abdd4b72a526e1a025e15162_scenario_canonical",
+        "scenario_ee06737eaacb4c1db2042e0a9601382b_e5fb9bc8abdd4b72a526e1a025e15162_scenario_paraphrase"
+      ],
+      "source_query_texts": [
+        "a stopped bus is blocking ego in lane ahead",
+        "the lead bus is just sitting in ego's lane"
+      ],
+      "anchor_sample_token": "ee06737eaacb4c1db2042e0a9601382b",
+      "anchor_sample_idx": 26,
+      "event_start_sample_idx": 23,
+      "event_end_sample_idx": 29,
+      "event_peak_sample_idx": 29,
+      "frame_count": 7,
+      "frames": [
+        {
+          "sample_token": "4e3a843b583f48b3bdd39859db01a47f",
+          "sample_idx": 23,
+          "timestamp_us": 1535731412896502,
+          "x_ego": 17.204617550998023,
+          "y_ego": -3.33702885285345,
+          "distance": 17.525256820968007
+        },
+        {
+          "sample_token": "648805fc7cc64aaea92f77876e2c6ed0",
+          "sample_idx": 24,
+          "timestamp_us": 1535731413395780,
+          "x_ego": 14.368855065388004,
+          "y_ego": -2.4443833287955385,
+          "distance": 14.575287501391527
+        },
+        {
+          "sample_token": "4b933f6dceae4df59410d569beb37bfd",
+          "sample_idx": 25,
+          "timestamp_us": 1535731413895239,
+          "x_ego": 11.76130524774004,
+          "y_ego": -2.2895085477676957,
+          "distance": 11.982076219120739
+        },
+        {
+          "sample_token": "ee06737eaacb4c1db2042e0a9601382b",
+          "sample_idx": 26,
+          "timestamp_us": 1535731414395528,
+          "x_ego": 9.248121832177276,
+          "y_ego": -2.5500268991810344,
+          "distance": 9.593247344321984
+        },
+        {
+          "sample_token": "d4d92e734bf54cc68d528d50500bb5e8",
+          "sample_idx": 27,
+          "timestamp_us": 1535731414895956,
+          "x_ego": 6.8221909394540035,
+          "y_ego": -3.0201219873010814,
+          "distance": 7.460792587423117
+        },
+        {
+          "sample_token": "755bc9b208e84c9c8024bcb962afb8b7",
+          "sample_idx": 28,
+          "timestamp_us": 1535731415396967,
+          "x_ego": 4.4450930361544465,
+          "y_ego": -3.346903688530972,
+          "distance": 5.564226487156232
+        },
+        {
+          "sample_token": "52f2da122cdf459a8dbb57278e3cdf25",
+          "sample_idx": 29,
+          "timestamp_us": 1535731415897916,
+          "x_ego": 2.180666950079626,
+          "y_ego": -3.43305105672664,
+          "distance": 4.0670810054954005
+        }
+      ],
+      "anchor_visibility": 4,
+      "min_distance_m": 4.067,
+      "min_ttc_s": 0.496,
+      "map_support": {
+        "available": true,
+        "actor_on_crosswalk_any": false,
+        "actor_on_walkway_any": false,
+        "actor_uses_ego_lane_any": true,
+        "shares_lane_at_anchor": true
+      },
+      "risk_facets": {
+        "distance_band": "near_range",
+        "ttc_band": "urgent_ttc",
+        "visibility_band": "clear_visibility",
+        "map_relation": "shared_lane_supported",
+        "occlusion_proxy": "large_lead_occluder"
+      }
+    },
+    {
+      "benchmark_group": "scenario_f90fa768036b477ebe3fc81978e7ef63_648502c5aec244eeb801f677fce6a6c1",
+      "reference_case_key": "f90fa768036b477ebe3fc81978e7ef63:648502c5aec244eeb801f677fce6a6c1",
+      "reference_scene_name": "scene-0058",
+      "scene_name": "scene-0058",
+      "scene_token": "9a1188aba4bf458c8220818a6c0be55a",
+      "instance_token": "648502c5aec244eeb801f677fce6a6c1",
+      "category_name": "vehicle.construction",
+      "category_group": "truck",
+      "location": "singapore-onenorth",
+      "primary_behavior": "stopped_lead",
+      "behaviors": [
+        "stopped_lead"
+      ],
+      "actors": [
+        "truck"
+      ],
+      "tags": [
+        "scenario_mining",
+        "canonical",
+        "stopped_lead",
+        "paraphrase"
+      ],
+      "source_query_ids": [
+        "scenario_f90fa768036b477ebe3fc81978e7ef63_648502c5aec244eeb801f677fce6a6c1_scenario_canonical",
+        "scenario_f90fa768036b477ebe3fc81978e7ef63_648502c5aec244eeb801f677fce6a6c1_scenario_paraphrase"
+      ],
+      "source_query_texts": [
+        "a stopped truck is blocking ego in lane ahead",
+        "the lead truck is just sitting in ego's lane"
+      ],
+      "anchor_sample_token": "f90fa768036b477ebe3fc81978e7ef63",
+      "anchor_sample_idx": 23,
+      "event_start_sample_idx": 22,
+      "event_end_sample_idx": 23,
+      "event_peak_sample_idx": 23,
+      "frame_count": 2,
+      "frames": [
+        {
+          "sample_token": "975986d3c8664be8818a5cae9bc30e09",
+          "sample_idx": 22,
+          "timestamp_us": 1532402826546362,
+          "x_ego": 2.7888230493972515,
+          "y_ego": 2.9323518233077834,
+          "distance": 4.04675440526181
+        },
+        {
+          "sample_token": "f90fa768036b477ebe3fc81978e7ef63",
+          "sample_idx": 23,
+          "timestamp_us": 1532402827046230,
+          "x_ego": 0.6981319033345699,
+          "y_ego": 2.5226840481518025,
+          "distance": 2.617503192214503
+        }
+      ],
+      "anchor_visibility": 4,
+      "min_distance_m": 2.618,
+      "min_ttc_s": 0.12,
+      "map_support": {
+        "available": true,
+        "actor_on_crosswalk_any": false,
+        "actor_on_walkway_any": false,
+        "actor_uses_ego_lane_any": true,
+        "shares_lane_at_anchor": true
+      },
+      "risk_facets": {
+        "distance_band": "critical_range",
+        "ttc_band": "urgent_ttc",
+        "visibility_band": "clear_visibility",
+        "map_relation": "shared_lane_supported",
+        "occlusion_proxy": "large_lead_occluder"
+      }
+    }
+  ]
+}
