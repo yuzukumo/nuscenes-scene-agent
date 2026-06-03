@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nuscenes-scene-agent"
 version = "0.1.0"
-description = "Toolkit for natural-language scene retrieval, validation, and benchmark generation on nuScenes."
+description = "Toolkit for natural-language scene retrieval, validation, benchmark generation, and replay regression on nuScenes and nuPlan."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
-keywords = ["nuScenes", "autonomous driving", "scene mining", "risk retrieval", "benchmark generation", "corner case mining"]
+keywords = ["nuScenes", "nuPlan", "autonomous driving", "scene mining", "risk retrieval", "benchmark generation", "replay regression", "corner case mining"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "License :: OSI Approved :: MIT License",
@@ -37,6 +37,9 @@ dev = [
 ]
 agent = [
   "langgraph>=1.1,<2; python_version >= '3.10'",
+]
+learned = [
+  "torch>=2.5",
 ]
 forecast = [
   "torch>=2.5",

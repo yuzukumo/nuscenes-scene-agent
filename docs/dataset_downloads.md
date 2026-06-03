@@ -1,6 +1,6 @@
 # Dataset Downloads
 
-This repository does not include `nuScenes` archives, extracted datasets, map files, or generated artifacts.
+Dataset archives, extracted datasets, map files, and generated artifacts are excluded from version control.
 
 Download the dataset files yourself and place them under `archives/` before running the preparation commands.
 
@@ -59,4 +59,27 @@ archives/
     v1.0-trainval01_blobs.tgz
     ...
     v1.0-trainval10_blobs.tgz
+```
+
+## Optional nuPlan Data
+
+Download `nuPlan` files from the official `nuPlan` dataset page. The replay-regression extension expects extracted files under:
+
+```text
+data/nuplan/
+  archives/
+    nuplan-maps-v1.0.zip
+    nuplan-v1.1_mini.zip
+    nuplan-v1.1_val.zip
+    nuplan-v1.1_train_boston.zip
+    nuplan-v1.1_train_pittsburgh.zip
+    nuplan-v1.1_train_singapore.zip
+  dataset/
+    maps/
+    data/cache/mini/
+    data/cache/val/
+    data/cache/train_boston/
+    data/cache/train_pittsburgh/
+    data/cache/train_singapore/
+    nuplan-v1.1/splits/
 ```

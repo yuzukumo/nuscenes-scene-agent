@@ -1,0 +1,5 @@
+experiment:
+  id: registry_export
+  type: registry_export
+  output: outputs/registry_export
+  result_path: outputs/registry_export/experiment_result.json

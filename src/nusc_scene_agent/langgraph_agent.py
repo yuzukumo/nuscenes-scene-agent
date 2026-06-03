@@ -31,6 +31,7 @@ class LangGraphState(TypedDict, total=False):
     query_mode: str
     rerank_mode: str
     llm_config: Optional[LLMConfig]
+    learned_reranker_checkpoint: Optional[Path]
     hypotheses: List[ParsedQuery]
     evaluated_hypotheses: List[Dict[str, object]]
     selected_query: ParsedQuery
@@ -88,6 +89,7 @@ def _evaluate_hypotheses_node(state: LangGraphState) -> LangGraphState:
                 candidate_pool=int(state.get("candidate_pool") or 30),
                 rerank_mode=str(state.get("rerank_mode") or "none"),
                 llm_config=state.get("llm_config"),
+                learned_reranker_checkpoint=state.get("learned_reranker_checkpoint"),
             )
             for query in state.get("hypotheses") or []
         ]
@@ -240,6 +242,7 @@ def run_langgraph_query_pipeline(
     query_mode: str = "hybrid",
     rerank_mode: str = "none",
     llm_config: Optional[LLMConfig] = None,
+    learned_reranker_checkpoint: Optional[Path] = None,
 ) -> Dict[str, object]:
     app = _build_langgraph_app()
     final_state = app.invoke(
@@ -253,6 +256,7 @@ def run_langgraph_query_pipeline(
             "query_mode": query_mode,
             "rerank_mode": rerank_mode,
             "llm_config": llm_config,
+            "learned_reranker_checkpoint": learned_reranker_checkpoint,
         }
     )
     return {

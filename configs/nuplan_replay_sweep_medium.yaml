@@ -1,0 +1,33 @@
+experiment:
+  id: nuplan_replay_sweep_medium
+  type: nuplan_replay_sweep
+  output: outputs/nuplan_replay_sweep_v1
+  result_path: outputs/nuplan_replay_sweep_v1/experiment_result.json
+
+nuplan_replay_sweep:
+  output: outputs/nuplan_replay_sweep_v1
+  defaults:
+    max_dbs: 128
+    max_cases: 24
+    max_cases_per_db: 4
+    history_s: 2.0
+    future_s: 4.0
+    frame_hz: 2.0
+    min_anchor_gap_s: 4.0
+    profiles:
+      - logged_ego
+      - constant_velocity
+      - stopped
+  studies:
+    - name: mini
+      split_dir: data/nuplan/dataset/nuplan-v1.1/splits/mini
+      max_dbs: 64
+      max_cases: 16
+    - name: val_sample
+      split_dir: data/nuplan/dataset/nuplan-v1.1/splits/val
+    - name: train_boston_sample
+      split_dir: data/nuplan/dataset/nuplan-v1.1/splits/train_boston
+    - name: train_pittsburgh_sample
+      split_dir: data/nuplan/dataset/nuplan-v1.1/splits/train_pittsburgh
+    - name: train_singapore_sample
+      split_dir: data/nuplan/dataset/nuplan-v1.1/splits/train_singapore

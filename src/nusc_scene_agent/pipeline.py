@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 from nusc_scene_agent.benchmark_schema import BenchmarkQuerySpec, apply_benchmark_spec
+from nusc_scene_agent.learned_retrieval import DEFAULT_LEARNED_RETRIEVER_CHECKPOINT, rerank_candidates_with_learned_model
 from nusc_scene_agent.llm_client import LLMConfig
 from nusc_scene_agent.llm_query_planner import resolve_hybrid_queries, resolve_query
 from nusc_scene_agent.llm_reranker import rerank_candidates_with_llm
 from nusc_scene_agent.models import ParsedQuery, ValidatedCase
+from nusc_scene_agent.multimodal_retrieval import rerank_candidates_with_multimodal_model
 from nusc_scene_agent.reporting import slugify, write_query_report
 from nusc_scene_agent.retrieval import retrieve_candidates
 from nusc_scene_agent.validation import ValidationConfig, validate_candidate
@@ -113,11 +116,19 @@ def _evaluate_query_hypothesis(
     candidate_pool: int,
     rerank_mode: str,
     llm_config: Optional[LLMConfig],
+    learned_reranker_checkpoint: Optional[Path] = None,
     validation_config: Optional[ValidationConfig] = None,
 ) -> Dict[str, object]:
     validation_config = validation_config or ValidationConfig()
     candidates = retrieve_candidates(conn, query=query, top_k=top_k, candidate_pool=max(candidate_pool, top_k))
-    if rerank_mode == "llm" and llm_config is not None and candidates:
+    if rerank_mode == "learned" and candidates:
+        checkpoint_path = learned_reranker_checkpoint or Path(
+            os.environ.get("NUSC_SCENE_AGENT_LEARNED_RERANKER", str(DEFAULT_LEARNED_RETRIEVER_CHECKPOINT))
+        )
+        candidates = rerank_candidates_with_learned_model(query, candidates, checkpoint_path=checkpoint_path)
+    elif rerank_mode == "multimodal" and candidates:
+        candidates = rerank_candidates_with_multimodal_model(query, candidates)
+    elif rerank_mode == "llm" and llm_config is not None and candidates:
         try:
             candidates = rerank_candidates_with_llm(query, candidates, llm_config)
         except Exception:  # noqa: BLE001
@@ -159,6 +170,7 @@ def run_query_pipeline(
     query_mode: str = "rule",
     rerank_mode: str = "none",
     llm_config: Optional[LLMConfig] = None,
+    learned_reranker_checkpoint: Optional[Path] = None,
     validation_config: Optional[ValidationConfig] = None,
 ) -> Dict[str, object]:
     db_path = db_path.resolve()
@@ -182,6 +194,7 @@ def run_query_pipeline(
                 candidate_pool=candidate_pool,
                 rerank_mode=rerank_mode,
                 llm_config=llm_config,
+                learned_reranker_checkpoint=learned_reranker_checkpoint,
                 validation_config=validation_config,
             )
             for query in hypotheses
@@ -206,6 +219,7 @@ def run_query_pipeline(
             candidate_pool=candidate_pool,
             rerank_mode=rerank_mode,
             llm_config=llm_config,
+            learned_reranker_checkpoint=learned_reranker_checkpoint,
             validation_config=validation_config,
         )
         candidates = list(evaluated["candidates"])

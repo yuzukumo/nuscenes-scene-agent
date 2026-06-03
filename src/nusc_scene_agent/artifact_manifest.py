@@ -1,0 +1,101 @@
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Mapping
+
+
+ARTIFACT_MANIFEST_SCHEMA = "benchmark_artifact_manifest_v1"
+
+
+@dataclass
+class ArtifactEntry:
+    path: str
+    role: str
+    kind: str
+    format: str
+    exists: bool
+    size_bytes: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+def build_artifact_entry(path: Path, role: str, kind: str, output_root: Path | None = None) -> ArtifactEntry:
+    path = Path(path)
+    output_root = Path(output_root) if output_root is not None else None
+    exists = path.exists()
+    display_path = str(path)
+    if output_root is not None:
+        try:
+            display_path = str(path.relative_to(output_root))
+        except ValueError:
+            display_path = str(path)
+    return ArtifactEntry(
+        path=display_path,
+        role=role,
+        kind=kind,
+        format=_artifact_format(path),
+        exists=exists,
+        size_bytes=path.stat().st_size if exists and path.is_file() else 0,
+    )
+
+
+def write_artifact_manifest(
+    output_dir: Path,
+    artifacts: Iterable[ArtifactEntry],
+    metadata: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    entries = [artifact.to_dict() for artifact in artifacts]
+    payload = {
+        "schema": ARTIFACT_MANIFEST_SCHEMA,
+        "metadata": dict(metadata or {}),
+        "overview": {
+            "artifact_count": len(entries),
+            "existing_artifact_count": sum(1 for item in entries if bool(item.get("exists"))),
+            "total_size_bytes": sum(int(item.get("size_bytes") or 0) for item in entries),
+        },
+        "artifacts": entries,
+    }
+    (output_dir / "artifact_manifest.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    (output_dir / "artifact_manifest.md").write_text(_render_manifest_markdown(payload), encoding="utf-8")
+    return payload
+
+
+def _artifact_format(path: Path) -> str:
+    suffix = path.suffix.lower().lstrip(".")
+    if suffix:
+        return suffix
+    if path.is_dir():
+        return "directory"
+    return "unknown"
+
+
+def _render_manifest_markdown(payload: Mapping[str, Any]) -> str:
+    overview = dict(payload.get("overview") or {})
+    lines: List[str] = [
+        "# Artifact Manifest",
+        "",
+        f"- Artifacts: `{overview.get('artifact_count', 0)}`",
+        f"- Existing artifacts: `{overview.get('existing_artifact_count', 0)}`",
+        f"- Total size bytes: `{overview.get('total_size_bytes', 0)}`",
+        "",
+        "| Path | Role | Kind | Format | Exists | Size Bytes |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for item in payload.get("artifacts", []):
+        lines.append(
+            "| `{0}` | `{1}` | `{2}` | `{3}` | `{4}` | `{5}` |".format(
+                item.get("path", ""),
+                item.get("role", ""),
+                item.get("kind", ""),
+                item.get("format", ""),
+                item.get("exists", False),
+                item.get("size_bytes", 0),
+            )
+        )
+    lines.append("")
+    return "\n".join(lines)

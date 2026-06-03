@@ -13,4 +13,5 @@ dependencies:
   - pip:
       - nuscenes-devkit>=1.1.11
       - shapely>=1.8
+      - langgraph>=1.1,<2
       - -e .

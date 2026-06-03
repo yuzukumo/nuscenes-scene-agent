@@ -9,7 +9,7 @@ from nusc_scene_agent.query_parser import parse_query
 
 class LLMQueryPlannerTest(unittest.TestCase):
     def test_plan_query_with_llm_normalizes_aliases(self) -> None:
-        config = LLMConfig(base_url="https://example.com", api_key="key", model="model")
+        config = LLMConfig(base_url="http://127.0.0.1:11434", model="gemma4:latest")
         payload = {
             "category_groups": ["car", "person"],
             "positions": ["ahead", "left"],
@@ -19,7 +19,7 @@ class LLMQueryPlannerTest(unittest.TestCase):
             "max_ttc_s": 4,
             "specific_keywords": ["night", "rain"],
         }
-        with patch("nusc_scene_agent.llm_query_planner.responses_json", return_value=payload):
+        with patch("nusc_scene_agent.llm_query_planner.llm_json", return_value=payload):
             planned = plan_query_with_llm("car merges from left", config)
 
         self.assertEqual(planned.category_groups, ["vehicle", "pedestrian"])
@@ -84,7 +84,7 @@ class LLMQueryPlannerTest(unittest.TestCase):
             merged = resolve_query(
                 "vehicle cuts in from right side",
                 mode="hybrid",
-                config=LLMConfig(base_url="https://example.com", api_key="key", model="model"),
+                config=LLMConfig(base_url="http://127.0.0.1:11434", model="gemma4:latest"),
             )
         self.assertIn("vehicle", merged.category_groups)
         self.assertIn("right", merged.positions)
@@ -105,7 +105,7 @@ class LLMQueryPlannerTest(unittest.TestCase):
         with patch("nusc_scene_agent.llm_query_planner.plan_query_with_llm", return_value=llm_query):
             queries = resolve_hybrid_queries(
                 "vehicle cuts in from right side",
-                config=LLMConfig(base_url="https://example.com", api_key="key", model="model"),
+                config=LLMConfig(base_url="http://127.0.0.1:11434", model="gemma4:latest"),
             )
         self.assertGreaterEqual(len(queries), 2)
         self.assertLessEqual(len(queries), 3)
@@ -126,7 +126,7 @@ class LLMQueryPlannerTest(unittest.TestCase):
             resolved = resolve_query(
                 "pedestrian crossing in front of ego lane",
                 mode="llm",
-                config=LLMConfig(base_url="https://example.com", api_key="key", model="model"),
+                config=LLMConfig(base_url="http://127.0.0.1:11434", model="gemma4:latest"),
             )
         self.assertIn("pedestrian", resolved.category_groups)
         self.assertIn("crossing", resolved.behaviors)
@@ -137,7 +137,7 @@ class LLMQueryPlannerTest(unittest.TestCase):
             resolved = resolve_query(
                 "pedestrian crossing in front of ego lane",
                 mode="hybrid",
-                config=LLMConfig(base_url="https://example.com", api_key="key", model="model"),
+                config=LLMConfig(base_url="http://127.0.0.1:11434", model="gemma4:latest"),
             )
         self.assertIn("pedestrian", resolved.category_groups)
         self.assertIn("planner:llm_error", resolved.specific_keywords)

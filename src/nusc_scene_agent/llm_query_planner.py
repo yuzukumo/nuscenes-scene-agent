@@ -4,7 +4,7 @@ import re
 from dataclasses import replace
 from typing import Dict, List, Optional, Sequence
 
-from nusc_scene_agent.llm_client import LLMConfig, responses_json
+from nusc_scene_agent.llm_client import LLMConfig, llm_json
 from nusc_scene_agent.models import ParsedQuery
 from nusc_scene_agent.query_parser import parse_query
 
@@ -273,12 +273,11 @@ def plan_query_with_llm(text: str, config: LLMConfig) -> ParsedQuery:
         "Do not include unsupported labels."
     )
     user_prompt = "Query: {0}".format(text)
-    payload = responses_json(
+    payload = llm_json(
         config=config,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         temperature=0.0,
-        reasoning_effort="low",
     )
     return _build_query_from_payload(text, payload)
 
@@ -334,7 +333,7 @@ def resolve_query(text: str, mode: str = "rule", config: Optional[LLMConfig] = N
     if mode == "rule":
         return rule_query
     if config is None:
-        raise ValueError("LLM query mode requires base_url, api_key, and model.")
+        raise ValueError("LLM query mode requires an Ollama base URL and model.")
     try:
         llm_query = plan_query_with_llm(text, config)
     except Exception:  # noqa: BLE001

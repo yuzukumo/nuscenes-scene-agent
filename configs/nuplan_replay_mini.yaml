@@ -1,0 +1,16 @@
+experiment:
+  id: nuplan_replay_mini
+  type: nuplan_replay_study
+  output: outputs/nuplan_mini_replay_study_v2
+  result_path: outputs/nuplan_mini_replay_study_v2/experiment_result.json
+
+nuplan_replay:
+  split_dir: data/nuplan/dataset/nuplan-v1.1/splits/mini
+  output: outputs/nuplan_mini_replay_study_v2
+  max_dbs: 64
+  max_cases: 16
+  max_cases_per_db: 4
+  profiles:
+    - logged_ego
+    - constant_velocity
+    - stopped

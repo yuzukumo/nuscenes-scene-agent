@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Dict, List, Sequence
 
-from nusc_scene_agent.llm_client import LLMConfig, responses_json
+from nusc_scene_agent.llm_client import LLMConfig, llm_json
 from nusc_scene_agent.models import ParsedQuery, RetrievalCandidate
 
 
@@ -47,12 +47,11 @@ def rerank_candidates_with_llm(
         "query": query.to_dict(),
         "candidates": candidate_payload,
     }
-    payload = responses_json(
+    payload = llm_json(
         config=config,
         system_prompt=system_prompt,
         user_prompt=json.dumps(user_prompt, ensure_ascii=False),
         temperature=0.0,
-        reasoning_effort="low",
     )
     ranking = payload.get("ranking") or []
     order: List[int] = []

@@ -1,8 +1,8 @@
 metadata:
   generator: scenario_mining_benchmark_generator_v1
   source_case_library: outputs/trainval_suite_llm_hybrid_en_v1/case_library_enriched.json
-  anchor_case_count: 8
-  query_count: 16
+  anchor_case_count: 24
+  query_count: 48
 queries:
 - id: scenario_f90fa768036b477ebe3fc81978e7ef63_648502c5aec244eeb801f677fce6a6c1_scenario_canonical
   description: scene-0058 scenario_canonical
@@ -61,7 +61,7 @@ queries:
   benchmark_group: scenario_f90fa768036b477ebe3fc81978e7ef63_648502c5aec244eeb801f677fce6a6c1
   variant_type: scenario_paraphrase
   query:
-    natural_language: the lead truck is just sitting in ego's lane
+    natural_language: the lead truck is stationary in ego lane
     actors:
     - truck
     positions:
@@ -96,7 +96,7 @@ queries:
   benchmark_group: scenario_0b9f33809d7f4e59a9fcf1703c896721_077998202a8f48479652b58e8c4ba3c5
   variant_type: scenario_canonical
   query:
-    natural_language: a pedestrian is very close ahead of ego
+    natural_language: a pedestrian is at close range ahead of ego
     actors:
     - pedestrian
     positions:
@@ -130,7 +130,7 @@ queries:
   benchmark_group: scenario_0b9f33809d7f4e59a9fcf1703c896721_077998202a8f48479652b58e8c4ba3c5
   variant_type: scenario_paraphrase
   query:
-    natural_language: a pedestrian is uncomfortably close ahead of ego
+    natural_language: a pedestrian remains at close range ahead of ego
     actors:
     - pedestrian
     positions:
@@ -164,7 +164,7 @@ queries:
   benchmark_group: scenario_d35eeb6ffde9481ba3c0264152c57f2f_9cce231a15104d2bb345f933898e4d21
   variant_type: scenario_canonical
   query:
-    natural_language: a pedestrian crosses directly in front of ego at the crosswalk
+    natural_language: a pedestrian crosses ahead of ego at a crosswalk
     actors:
     - pedestrian
     positions:
@@ -198,7 +198,7 @@ queries:
   benchmark_group: scenario_d35eeb6ffde9481ba3c0264152c57f2f_9cce231a15104d2bb345f933898e4d21
   variant_type: scenario_paraphrase
   query:
-    natural_language: a pedestrian steps into ego's path right ahead
+    natural_language: a pedestrian crosses into ego path ahead
     actors:
     - pedestrian
     positions:
@@ -267,7 +267,7 @@ queries:
   benchmark_group: scenario_632a1f8aea9146aaa9c558727da492c7_a745648fa2324541b94aa6e022c4b280
   variant_type: scenario_paraphrase
   query:
-    natural_language: a vehicle noses in from the passenger side
+    natural_language: a vehicle merges from the passenger side into ego lane
     actors:
     - vehicle
     positions:
@@ -336,7 +336,7 @@ queries:
   benchmark_group: scenario_08461b5c6f364b1aa0549f44f84ac3be_ddf5942930ab463fbaf402fa52d0c9bc
   variant_type: scenario_paraphrase
   query:
-    natural_language: a vehicle comes straight at ego
+    natural_language: a vehicle approaches ego in the opposite direction
     actors:
     - vehicle
     positions: []
@@ -404,7 +404,7 @@ queries:
   benchmark_group: scenario_ee06737eaacb4c1db2042e0a9601382b_e5fb9bc8abdd4b72a526e1a025e15162
   variant_type: scenario_paraphrase
   query:
-    natural_language: the lead bus is just sitting in ego's lane
+    natural_language: the lead bus is stationary in ego lane
     actors:
     - bus
     positions:
@@ -439,7 +439,7 @@ queries:
   benchmark_group: scenario_536eeb9e7c8d4556a7aeb4bcde0eba7e_31ee8f4b2d284c3a99d8649973281683
   variant_type: scenario_canonical
   query:
-    natural_language: a bike rider crosses directly in front of ego at the crosswalk
+    natural_language: a bike rider crosses ahead of ego at a crosswalk
     actors:
     - bicycle
     positions:
@@ -473,7 +473,7 @@ queries:
   benchmark_group: scenario_536eeb9e7c8d4556a7aeb4bcde0eba7e_31ee8f4b2d284c3a99d8649973281683
   variant_type: scenario_paraphrase
   query:
-    natural_language: a bike rider steps into ego's path right ahead
+    natural_language: a bike rider crosses into ego path ahead
     actors:
     - bicycle
     positions:
@@ -544,7 +544,7 @@ queries:
   benchmark_group: scenario_cbbd333271434197b1bd8302ae03100f_5206449eec0d42229bd1a12f1769f233
   variant_type: scenario_paraphrase
   query:
-    natural_language: the lead vehicle is just sitting in ego's lane
+    natural_language: the lead vehicle is stationary in ego lane
     actors:
     - vehicle
     positions:
@@ -552,6 +552,1108 @@ queries:
     - left
     behaviors:
     - stopped_lead
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_896299aad3b24c6fac597737ad9a7a69_fb5287f6629c4ae89a4a6caba2fb763e_scenario_canonical
+  description: scene-0305 scenario_canonical
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - canonical
+  - stopped_lead
+  reference_case_keys:
+  - 896299aad3b24c6fac597737ad9a7a69:fb5287f6629c4ae89a4a6caba2fb763e
+  reference_scene_names:
+  - scene-0305
+  reference_instance_tokens:
+  - fb5287f6629c4ae89a4a6caba2fb763e
+  reference_event_sample_range:
+  - 28
+  - 32
+  reference_peak_sample_idx: 32
+  expect_match: true
+  benchmark_group: scenario_896299aad3b24c6fac597737ad9a7a69_fb5287f6629c4ae89a4a6caba2fb763e
+  variant_type: scenario_canonical
+  query:
+    natural_language: a stopped vehicle is blocking ego in lane ahead
+    actors:
+    - vehicle
+    positions:
+    - front
+    behaviors:
+    - stopped_lead
+    risk_terms: []
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_896299aad3b24c6fac597737ad9a7a69_fb5287f6629c4ae89a4a6caba2fb763e_scenario_paraphrase
+  description: scene-0305 scenario_paraphrase
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - paraphrase
+  - stopped_lead
+  reference_case_keys:
+  - 896299aad3b24c6fac597737ad9a7a69:fb5287f6629c4ae89a4a6caba2fb763e
+  reference_scene_names:
+  - scene-0305
+  reference_instance_tokens:
+  - fb5287f6629c4ae89a4a6caba2fb763e
+  reference_event_sample_range:
+  - 28
+  - 32
+  reference_peak_sample_idx: 32
+  expect_match: true
+  benchmark_group: scenario_896299aad3b24c6fac597737ad9a7a69_fb5287f6629c4ae89a4a6caba2fb763e
+  variant_type: scenario_paraphrase
+  query:
+    natural_language: the lead vehicle is stationary in ego lane
+    actors:
+    - vehicle
+    positions:
+    - front
+    behaviors:
+    - stopped_lead
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_f9dd9bcb529140b19ccfca5703057a36_ae92b23cc87a481a91f208c3c699869c_scenario_canonical
+  description: scene-0396 scenario_canonical
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - canonical
+  - stopped_lead
+  reference_case_keys:
+  - f9dd9bcb529140b19ccfca5703057a36:ae92b23cc87a481a91f208c3c699869c
+  reference_scene_names:
+  - scene-0396
+  reference_instance_tokens:
+  - ae92b23cc87a481a91f208c3c699869c
+  reference_event_sample_range:
+  - 2
+  - 6
+  reference_peak_sample_idx: 6
+  expect_match: true
+  benchmark_group: scenario_f9dd9bcb529140b19ccfca5703057a36_ae92b23cc87a481a91f208c3c699869c
+  variant_type: scenario_canonical
+  query:
+    natural_language: a stopped vehicle is blocking ego in lane ahead
+    actors:
+    - vehicle
+    positions:
+    - front
+    behaviors:
+    - stopped_lead
+    risk_terms: []
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_f9dd9bcb529140b19ccfca5703057a36_ae92b23cc87a481a91f208c3c699869c_scenario_paraphrase
+  description: scene-0396 scenario_paraphrase
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - paraphrase
+  - stopped_lead
+  reference_case_keys:
+  - f9dd9bcb529140b19ccfca5703057a36:ae92b23cc87a481a91f208c3c699869c
+  reference_scene_names:
+  - scene-0396
+  reference_instance_tokens:
+  - ae92b23cc87a481a91f208c3c699869c
+  reference_event_sample_range:
+  - 2
+  - 6
+  reference_peak_sample_idx: 6
+  expect_match: true
+  benchmark_group: scenario_f9dd9bcb529140b19ccfca5703057a36_ae92b23cc87a481a91f208c3c699869c
+  variant_type: scenario_paraphrase
+  query:
+    natural_language: the lead vehicle is stationary in ego lane
+    actors:
+    - vehicle
+    positions:
+    - front
+    behaviors:
+    - stopped_lead
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_14262d82d2a249f4b3565b85ec656264_eaf881417c39443791fb51b5fa9f6d43_scenario_canonical
+  description: scene-0991 scenario_canonical
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - canonical
+  - proximity
+  reference_case_keys:
+  - 14262d82d2a249f4b3565b85ec656264:eaf881417c39443791fb51b5fa9f6d43
+  reference_scene_names:
+  - scene-0991
+  reference_instance_tokens:
+  - eaf881417c39443791fb51b5fa9f6d43
+  reference_event_sample_range:
+  - 36
+  - 40
+  reference_peak_sample_idx: 40
+  expect_match: true
+  benchmark_group: scenario_14262d82d2a249f4b3565b85ec656264_eaf881417c39443791fb51b5fa9f6d43
+  variant_type: scenario_canonical
+  query:
+    natural_language: a pedestrian is at close range ahead of ego
+    actors:
+    - pedestrian
+    positions:
+    - front
+    behaviors: []
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_14262d82d2a249f4b3565b85ec656264_eaf881417c39443791fb51b5fa9f6d43_scenario_paraphrase
+  description: scene-0991 scenario_paraphrase
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - paraphrase
+  - proximity
+  reference_case_keys:
+  - 14262d82d2a249f4b3565b85ec656264:eaf881417c39443791fb51b5fa9f6d43
+  reference_scene_names:
+  - scene-0991
+  reference_instance_tokens:
+  - eaf881417c39443791fb51b5fa9f6d43
+  reference_event_sample_range:
+  - 36
+  - 40
+  reference_peak_sample_idx: 40
+  expect_match: true
+  benchmark_group: scenario_14262d82d2a249f4b3565b85ec656264_eaf881417c39443791fb51b5fa9f6d43
+  variant_type: scenario_paraphrase
+  query:
+    natural_language: a pedestrian remains at close range ahead of ego
+    actors:
+    - pedestrian
+    positions:
+    - front
+    behaviors: []
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_438abe26d0044fa6a1f3010ff7d0f501_45fdd058131d4b58beeb478819c31e44_scenario_canonical
+  description: scene-0395 scenario_canonical
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - canonical
+  - stopped_lead
+  reference_case_keys:
+  - 438abe26d0044fa6a1f3010ff7d0f501:45fdd058131d4b58beeb478819c31e44
+  reference_scene_names:
+  - scene-0395
+  reference_instance_tokens:
+  - 45fdd058131d4b58beeb478819c31e44
+  reference_event_sample_range:
+  - 4
+  - 8
+  reference_peak_sample_idx: 8
+  expect_match: true
+  benchmark_group: scenario_438abe26d0044fa6a1f3010ff7d0f501_45fdd058131d4b58beeb478819c31e44
+  variant_type: scenario_canonical
+  query:
+    natural_language: a stopped truck is blocking ego in lane ahead
+    actors:
+    - truck
+    positions:
+    - front
+    behaviors:
+    - stopped_lead
+    risk_terms: []
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_438abe26d0044fa6a1f3010ff7d0f501_45fdd058131d4b58beeb478819c31e44_scenario_paraphrase
+  description: scene-0395 scenario_paraphrase
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - paraphrase
+  - stopped_lead
+  reference_case_keys:
+  - 438abe26d0044fa6a1f3010ff7d0f501:45fdd058131d4b58beeb478819c31e44
+  reference_scene_names:
+  - scene-0395
+  reference_instance_tokens:
+  - 45fdd058131d4b58beeb478819c31e44
+  reference_event_sample_range:
+  - 4
+  - 8
+  reference_peak_sample_idx: 8
+  expect_match: true
+  benchmark_group: scenario_438abe26d0044fa6a1f3010ff7d0f501_45fdd058131d4b58beeb478819c31e44
+  variant_type: scenario_paraphrase
+  query:
+    natural_language: the lead truck is stationary in ego lane
+    actors:
+    - truck
+    positions:
+    - front
+    behaviors:
+    - stopped_lead
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_1244ad3ad1dd409c96c5158b529c89ef_2120c359c7514f69a29f64e2ec530afe_scenario_canonical
+  description: scene-0221 scenario_canonical
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - canonical
+  - proximity
+  reference_case_keys:
+  - 1244ad3ad1dd409c96c5158b529c89ef:2120c359c7514f69a29f64e2ec530afe
+  reference_scene_names:
+  - scene-0221
+  reference_instance_tokens:
+  - 2120c359c7514f69a29f64e2ec530afe
+  reference_event_sample_range:
+  - 30
+  - 38
+  reference_peak_sample_idx: 34
+  expect_match: true
+  benchmark_group: scenario_1244ad3ad1dd409c96c5158b529c89ef_2120c359c7514f69a29f64e2ec530afe
+  variant_type: scenario_canonical
+  query:
+    natural_language: a vehicle is at close range on the right side of ego
+    actors:
+    - vehicle
+    positions:
+    - front
+    - right
+    behaviors: []
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_1244ad3ad1dd409c96c5158b529c89ef_2120c359c7514f69a29f64e2ec530afe_scenario_paraphrase
+  description: scene-0221 scenario_paraphrase
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - paraphrase
+  - proximity
+  reference_case_keys:
+  - 1244ad3ad1dd409c96c5158b529c89ef:2120c359c7514f69a29f64e2ec530afe
+  reference_scene_names:
+  - scene-0221
+  reference_instance_tokens:
+  - 2120c359c7514f69a29f64e2ec530afe
+  reference_event_sample_range:
+  - 30
+  - 38
+  reference_peak_sample_idx: 34
+  expect_match: true
+  benchmark_group: scenario_1244ad3ad1dd409c96c5158b529c89ef_2120c359c7514f69a29f64e2ec530afe
+  variant_type: scenario_paraphrase
+  query:
+    natural_language: a vehicle remains at close range on the right side of ego
+    actors:
+    - vehicle
+    positions:
+    - front
+    - right
+    behaviors: []
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_3836cb8602f14e40817a398eedb0fcf6_8c8554b54714408682031a66063ab438_scenario_canonical
+  description: scene-0154 scenario_canonical
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - canonical
+  - proximity
+  reference_case_keys:
+  - 3836cb8602f14e40817a398eedb0fcf6:8c8554b54714408682031a66063ab438
+  reference_scene_names:
+  - scene-0154
+  reference_instance_tokens:
+  - 8c8554b54714408682031a66063ab438
+  reference_event_sample_range:
+  - 32
+  - 38
+  reference_peak_sample_idx: 36
+  expect_match: true
+  benchmark_group: scenario_3836cb8602f14e40817a398eedb0fcf6_8c8554b54714408682031a66063ab438
+  variant_type: scenario_canonical
+  query:
+    natural_language: a vehicle is at close range on the right side of ego
+    actors:
+    - vehicle
+    positions:
+    - front
+    - right
+    behaviors: []
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_3836cb8602f14e40817a398eedb0fcf6_8c8554b54714408682031a66063ab438_scenario_paraphrase
+  description: scene-0154 scenario_paraphrase
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - paraphrase
+  - proximity
+  reference_case_keys:
+  - 3836cb8602f14e40817a398eedb0fcf6:8c8554b54714408682031a66063ab438
+  reference_scene_names:
+  - scene-0154
+  reference_instance_tokens:
+  - 8c8554b54714408682031a66063ab438
+  reference_event_sample_range:
+  - 32
+  - 38
+  reference_peak_sample_idx: 36
+  expect_match: true
+  benchmark_group: scenario_3836cb8602f14e40817a398eedb0fcf6_8c8554b54714408682031a66063ab438
+  variant_type: scenario_paraphrase
+  query:
+    natural_language: a vehicle remains at close range on the right side of ego
+    actors:
+    - vehicle
+    positions:
+    - front
+    - right
+    behaviors: []
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_0bc8de2e16054030862df31f52fd1f00_5cb782060cdc44cab0436512e5e2bb09_scenario_canonical
+  description: scene-0043 scenario_canonical
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - canonical
+  - proximity
+  reference_case_keys:
+  - 0bc8de2e16054030862df31f52fd1f00:5cb782060cdc44cab0436512e5e2bb09
+  reference_scene_names:
+  - scene-0043
+  reference_instance_tokens:
+  - 5cb782060cdc44cab0436512e5e2bb09
+  reference_event_sample_range:
+  - 19
+  - 27
+  reference_peak_sample_idx: 23
+  expect_match: true
+  benchmark_group: scenario_0bc8de2e16054030862df31f52fd1f00_5cb782060cdc44cab0436512e5e2bb09
+  variant_type: scenario_canonical
+  query:
+    natural_language: a vehicle is at close range on the left side of ego
+    actors:
+    - vehicle
+    positions:
+    - left
+    behaviors: []
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_0bc8de2e16054030862df31f52fd1f00_5cb782060cdc44cab0436512e5e2bb09_scenario_paraphrase
+  description: scene-0043 scenario_paraphrase
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - paraphrase
+  - proximity
+  reference_case_keys:
+  - 0bc8de2e16054030862df31f52fd1f00:5cb782060cdc44cab0436512e5e2bb09
+  reference_scene_names:
+  - scene-0043
+  reference_instance_tokens:
+  - 5cb782060cdc44cab0436512e5e2bb09
+  reference_event_sample_range:
+  - 19
+  - 27
+  reference_peak_sample_idx: 23
+  expect_match: true
+  benchmark_group: scenario_0bc8de2e16054030862df31f52fd1f00_5cb782060cdc44cab0436512e5e2bb09
+  variant_type: scenario_paraphrase
+  query:
+    natural_language: a vehicle remains at close range on the left side of ego
+    actors:
+    - vehicle
+    positions:
+    - left
+    behaviors: []
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_bc29c037a5b649b99f930cb4e6c4cdc6_cc567874ed8a43259879c87f080b3576_scenario_canonical
+  description: scene-0196 scenario_canonical
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - canonical
+  - stopped_lead
+  reference_case_keys:
+  - bc29c037a5b649b99f930cb4e6c4cdc6:cc567874ed8a43259879c87f080b3576
+  reference_scene_names:
+  - scene-0196
+  reference_instance_tokens:
+  - cc567874ed8a43259879c87f080b3576
+  reference_event_sample_range:
+  - 8
+  - 11
+  reference_peak_sample_idx: 11
+  expect_match: true
+  benchmark_group: scenario_bc29c037a5b649b99f930cb4e6c4cdc6_cc567874ed8a43259879c87f080b3576
+  variant_type: scenario_canonical
+  query:
+    natural_language: a stopped bus is blocking ego in lane ahead
+    actors:
+    - bus
+    positions:
+    - front
+    behaviors:
+    - stopped_lead
+    risk_terms: []
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_bc29c037a5b649b99f930cb4e6c4cdc6_cc567874ed8a43259879c87f080b3576_scenario_paraphrase
+  description: scene-0196 scenario_paraphrase
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - paraphrase
+  - stopped_lead
+  reference_case_keys:
+  - bc29c037a5b649b99f930cb4e6c4cdc6:cc567874ed8a43259879c87f080b3576
+  reference_scene_names:
+  - scene-0196
+  reference_instance_tokens:
+  - cc567874ed8a43259879c87f080b3576
+  reference_event_sample_range:
+  - 8
+  - 11
+  reference_peak_sample_idx: 11
+  expect_match: true
+  benchmark_group: scenario_bc29c037a5b649b99f930cb4e6c4cdc6_cc567874ed8a43259879c87f080b3576
+  variant_type: scenario_paraphrase
+  query:
+    natural_language: the lead bus is stationary in ego lane
+    actors:
+    - bus
+    positions:
+    - front
+    behaviors:
+    - stopped_lead
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_45224fd5dde34ac59d8682de6cc59ef2_4ac6acde2e544f26abed23596a78b118_scenario_canonical
+  description: scene-0026 scenario_canonical
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - canonical
+  - crossing
+  reference_case_keys:
+  - 45224fd5dde34ac59d8682de6cc59ef2:4ac6acde2e544f26abed23596a78b118
+  reference_scene_names:
+  - scene-0026
+  reference_instance_tokens:
+  - 4ac6acde2e544f26abed23596a78b118
+  reference_event_sample_range:
+  - 0
+  - 5
+  reference_peak_sample_idx: 3
+  expect_match: true
+  benchmark_group: scenario_45224fd5dde34ac59d8682de6cc59ef2_4ac6acde2e544f26abed23596a78b118
+  variant_type: scenario_canonical
+  query:
+    natural_language: a pedestrian crosses ahead of ego at a crosswalk
+    actors:
+    - pedestrian
+    positions:
+    - front
+    behaviors:
+    - crossing
+    risk_terms: []
+    thresholds:
+      near_distance_m: 13.1
+      max_ttc_s: 3.0
+- id: scenario_45224fd5dde34ac59d8682de6cc59ef2_4ac6acde2e544f26abed23596a78b118_scenario_paraphrase
+  description: scene-0026 scenario_paraphrase
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - paraphrase
+  - crossing
+  reference_case_keys:
+  - 45224fd5dde34ac59d8682de6cc59ef2:4ac6acde2e544f26abed23596a78b118
+  reference_scene_names:
+  - scene-0026
+  reference_instance_tokens:
+  - 4ac6acde2e544f26abed23596a78b118
+  reference_event_sample_range:
+  - 0
+  - 5
+  reference_peak_sample_idx: 3
+  expect_match: true
+  benchmark_group: scenario_45224fd5dde34ac59d8682de6cc59ef2_4ac6acde2e544f26abed23596a78b118
+  variant_type: scenario_paraphrase
+  query:
+    natural_language: a pedestrian crosses into ego path ahead
+    actors:
+    - pedestrian
+    positions:
+    - front
+    behaviors:
+    - crossing
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 13.1
+      max_ttc_s: 3.0
+- id: scenario_8cc06390249d4895b5b9b860f0952f24_6b04180e41cf473c92c1bc1059c3bca8_scenario_canonical
+  description: scene-1100 scenario_canonical
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - canonical
+  - cut_in
+  reference_case_keys:
+  - 8cc06390249d4895b5b9b860f0952f24:6b04180e41cf473c92c1bc1059c3bca8
+  reference_scene_names:
+  - scene-1100
+  reference_instance_tokens:
+  - 6b04180e41cf473c92c1bc1059c3bca8
+  reference_event_sample_range:
+  - 35
+  - 37
+  reference_peak_sample_idx: 37
+  expect_match: true
+  benchmark_group: scenario_8cc06390249d4895b5b9b860f0952f24_6b04180e41cf473c92c1bc1059c3bca8
+  variant_type: scenario_canonical
+  query:
+    natural_language: a vehicle merges into ego lane from the left
+    actors:
+    - vehicle
+    positions:
+    - left
+    behaviors:
+    - cut_in
+    risk_terms: []
+    thresholds:
+      near_distance_m: 10.9
+      max_ttc_s: 3.0
+- id: scenario_8cc06390249d4895b5b9b860f0952f24_6b04180e41cf473c92c1bc1059c3bca8_scenario_paraphrase
+  description: scene-1100 scenario_paraphrase
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - paraphrase
+  - cut_in
+  reference_case_keys:
+  - 8cc06390249d4895b5b9b860f0952f24:6b04180e41cf473c92c1bc1059c3bca8
+  reference_scene_names:
+  - scene-1100
+  reference_instance_tokens:
+  - 6b04180e41cf473c92c1bc1059c3bca8
+  reference_event_sample_range:
+  - 35
+  - 37
+  reference_peak_sample_idx: 37
+  expect_match: true
+  benchmark_group: scenario_8cc06390249d4895b5b9b860f0952f24_6b04180e41cf473c92c1bc1059c3bca8
+  variant_type: scenario_paraphrase
+  query:
+    natural_language: a vehicle merges from the driver's side into ego lane
+    actors:
+    - vehicle
+    positions:
+    - left
+    behaviors:
+    - cut_in
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 10.9
+      max_ttc_s: 3.0
+- id: scenario_358fbd910e3f47dbaf9d8dc09dca02e1_2d6ea8b13e2844a8b7e2f3e71bfcd606_scenario_canonical
+  description: scene-0719 scenario_canonical
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - canonical
+  - crossing
+  reference_case_keys:
+  - 358fbd910e3f47dbaf9d8dc09dca02e1:2d6ea8b13e2844a8b7e2f3e71bfcd606
+  reference_scene_names:
+  - scene-0719
+  reference_instance_tokens:
+  - 2d6ea8b13e2844a8b7e2f3e71bfcd606
+  reference_event_sample_range:
+  - 17
+  - 25
+  reference_peak_sample_idx: 21
+  expect_match: true
+  benchmark_group: scenario_358fbd910e3f47dbaf9d8dc09dca02e1_2d6ea8b13e2844a8b7e2f3e71bfcd606
+  variant_type: scenario_canonical
+  query:
+    natural_language: a pedestrian crosses ahead of ego at a crosswalk
+    actors:
+    - pedestrian
+    positions:
+    - front
+    behaviors:
+    - crossing
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 9.3
+      max_ttc_s: 3.0
+- id: scenario_358fbd910e3f47dbaf9d8dc09dca02e1_2d6ea8b13e2844a8b7e2f3e71bfcd606_scenario_paraphrase
+  description: scene-0719 scenario_paraphrase
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - paraphrase
+  - crossing
+  reference_case_keys:
+  - 358fbd910e3f47dbaf9d8dc09dca02e1:2d6ea8b13e2844a8b7e2f3e71bfcd606
+  reference_scene_names:
+  - scene-0719
+  reference_instance_tokens:
+  - 2d6ea8b13e2844a8b7e2f3e71bfcd606
+  reference_event_sample_range:
+  - 17
+  - 25
+  reference_peak_sample_idx: 21
+  expect_match: true
+  benchmark_group: scenario_358fbd910e3f47dbaf9d8dc09dca02e1_2d6ea8b13e2844a8b7e2f3e71bfcd606
+  variant_type: scenario_paraphrase
+  query:
+    natural_language: a pedestrian crosses into ego path ahead
+    actors:
+    - pedestrian
+    positions:
+    - front
+    behaviors:
+    - crossing
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 9.3
+      max_ttc_s: 3.0
+- id: scenario_5b20b7b7a4c24a5c8363a7ef17d82825_762d483b73654b158cd2b050dd2e60a2_scenario_canonical
+  description: scene-0184 scenario_canonical
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - canonical
+  - crossing
+  reference_case_keys:
+  - 5b20b7b7a4c24a5c8363a7ef17d82825:762d483b73654b158cd2b050dd2e60a2
+  reference_scene_names:
+  - scene-0184
+  reference_instance_tokens:
+  - 762d483b73654b158cd2b050dd2e60a2
+  reference_event_sample_range:
+  - 23
+  - 28
+  reference_peak_sample_idx: 26
+  expect_match: true
+  benchmark_group: scenario_5b20b7b7a4c24a5c8363a7ef17d82825_762d483b73654b158cd2b050dd2e60a2
+  variant_type: scenario_canonical
+  query:
+    natural_language: a bike rider crosses ahead of ego at a crosswalk
+    actors:
+    - bicycle
+    positions:
+    - front
+    behaviors:
+    - crossing
+    risk_terms: []
+    thresholds:
+      near_distance_m: 14.1
+      max_ttc_s: 3.0
+- id: scenario_5b20b7b7a4c24a5c8363a7ef17d82825_762d483b73654b158cd2b050dd2e60a2_scenario_paraphrase
+  description: scene-0184 scenario_paraphrase
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - paraphrase
+  - crossing
+  reference_case_keys:
+  - 5b20b7b7a4c24a5c8363a7ef17d82825:762d483b73654b158cd2b050dd2e60a2
+  reference_scene_names:
+  - scene-0184
+  reference_instance_tokens:
+  - 762d483b73654b158cd2b050dd2e60a2
+  reference_event_sample_range:
+  - 23
+  - 28
+  reference_peak_sample_idx: 26
+  expect_match: true
+  benchmark_group: scenario_5b20b7b7a4c24a5c8363a7ef17d82825_762d483b73654b158cd2b050dd2e60a2
+  variant_type: scenario_paraphrase
+  query:
+    natural_language: a bike rider crosses into ego path ahead
+    actors:
+    - bicycle
+    positions:
+    - front
+    behaviors:
+    - crossing
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 14.1
+      max_ttc_s: 3.0
+- id: scenario_117da90271d34d1ab98031124f507819_70d6b186a9d74004872a4aafb0b0c277_scenario_canonical
+  description: scene-0072 scenario_canonical
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - canonical
+  - cut_in
+  reference_case_keys:
+  - 117da90271d34d1ab98031124f507819:70d6b186a9d74004872a4aafb0b0c277
+  reference_scene_names:
+  - scene-0072
+  reference_instance_tokens:
+  - 70d6b186a9d74004872a4aafb0b0c277
+  reference_event_sample_range:
+  - 17
+  - 19
+  reference_peak_sample_idx: 18
+  expect_match: true
+  benchmark_group: scenario_117da90271d34d1ab98031124f507819_70d6b186a9d74004872a4aafb0b0c277
+  variant_type: scenario_canonical
+  query:
+    natural_language: a vehicle merges into ego lane from the left
+    actors:
+    - vehicle
+    positions:
+    - left
+    behaviors:
+    - cut_in
+    risk_terms: []
+    thresholds:
+      near_distance_m: 12.4
+      max_ttc_s: 3.0
+- id: scenario_117da90271d34d1ab98031124f507819_70d6b186a9d74004872a4aafb0b0c277_scenario_paraphrase
+  description: scene-0072 scenario_paraphrase
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - paraphrase
+  - cut_in
+  reference_case_keys:
+  - 117da90271d34d1ab98031124f507819:70d6b186a9d74004872a4aafb0b0c277
+  reference_scene_names:
+  - scene-0072
+  reference_instance_tokens:
+  - 70d6b186a9d74004872a4aafb0b0c277
+  reference_event_sample_range:
+  - 17
+  - 19
+  reference_peak_sample_idx: 18
+  expect_match: true
+  benchmark_group: scenario_117da90271d34d1ab98031124f507819_70d6b186a9d74004872a4aafb0b0c277
+  variant_type: scenario_paraphrase
+  query:
+    natural_language: a vehicle merges from the driver's side into ego lane
+    actors:
+    - vehicle
+    positions:
+    - left
+    behaviors:
+    - cut_in
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 12.4
+      max_ttc_s: 3.0
+- id: scenario_331fa27d969c420597348566ae423e15_388990067e0f4fabbae3b52d18282979_scenario_canonical
+  description: scene-1061 scenario_canonical
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - canonical
+  - oncoming
+  reference_case_keys:
+  - 331fa27d969c420597348566ae423e15:388990067e0f4fabbae3b52d18282979
+  reference_scene_names:
+  - scene-1061
+  reference_instance_tokens:
+  - 388990067e0f4fabbae3b52d18282979
+  reference_event_sample_range:
+  - 0
+  - 4
+  reference_peak_sample_idx: 4
+  expect_match: true
+  benchmark_group: scenario_331fa27d969c420597348566ae423e15_388990067e0f4fabbae3b52d18282979
+  variant_type: scenario_canonical
+  query:
+    natural_language: an oncoming vehicle approaches ego in the same corridor
+    actors:
+    - vehicle
+    positions: []
+    behaviors:
+    - oncoming
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_331fa27d969c420597348566ae423e15_388990067e0f4fabbae3b52d18282979_scenario_paraphrase
+  description: scene-1061 scenario_paraphrase
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - paraphrase
+  - oncoming
+  reference_case_keys:
+  - 331fa27d969c420597348566ae423e15:388990067e0f4fabbae3b52d18282979
+  reference_scene_names:
+  - scene-1061
+  reference_instance_tokens:
+  - 388990067e0f4fabbae3b52d18282979
+  reference_event_sample_range:
+  - 0
+  - 4
+  reference_peak_sample_idx: 4
+  expect_match: true
+  benchmark_group: scenario_331fa27d969c420597348566ae423e15_388990067e0f4fabbae3b52d18282979
+  variant_type: scenario_paraphrase
+  query:
+    natural_language: a vehicle approaches ego in the opposite direction
+    actors:
+    - vehicle
+    positions: []
+    behaviors:
+    - oncoming
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_214326b2bca0478d85c9eb80f01f4ff1_7693f6b392f044699aaa0c7a1c6da2a5_scenario_canonical
+  description: scene-0367 scenario_canonical
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - canonical
+  - oncoming
+  reference_case_keys:
+  - 214326b2bca0478d85c9eb80f01f4ff1:7693f6b392f044699aaa0c7a1c6da2a5
+  reference_scene_names:
+  - scene-0367
+  reference_instance_tokens:
+  - 7693f6b392f044699aaa0c7a1c6da2a5
+  reference_event_sample_range:
+  - 3
+  - 7
+  reference_peak_sample_idx: 7
+  expect_match: true
+  benchmark_group: scenario_214326b2bca0478d85c9eb80f01f4ff1_7693f6b392f044699aaa0c7a1c6da2a5
+  variant_type: scenario_canonical
+  query:
+    natural_language: an oncoming truck approaches ego in the same corridor
+    actors:
+    - truck
+    positions: []
+    behaviors:
+    - oncoming
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_214326b2bca0478d85c9eb80f01f4ff1_7693f6b392f044699aaa0c7a1c6da2a5_scenario_paraphrase
+  description: scene-0367 scenario_paraphrase
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - paraphrase
+  - oncoming
+  reference_case_keys:
+  - 214326b2bca0478d85c9eb80f01f4ff1:7693f6b392f044699aaa0c7a1c6da2a5
+  reference_scene_names:
+  - scene-0367
+  reference_instance_tokens:
+  - 7693f6b392f044699aaa0c7a1c6da2a5
+  reference_event_sample_range:
+  - 3
+  - 7
+  reference_peak_sample_idx: 7
+  expect_match: true
+  benchmark_group: scenario_214326b2bca0478d85c9eb80f01f4ff1_7693f6b392f044699aaa0c7a1c6da2a5
+  variant_type: scenario_paraphrase
+  query:
+    natural_language: a truck approaches ego in the opposite direction
+    actors:
+    - truck
+    positions: []
+    behaviors:
+    - oncoming
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_d70f041998ca465991f1675a79483092_fba1f3467c45425599569a1a85f1d947_scenario_canonical
+  description: scene-1016 scenario_canonical
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - canonical
+  - oncoming
+  reference_case_keys:
+  - d70f041998ca465991f1675a79483092:fba1f3467c45425599569a1a85f1d947
+  reference_scene_names:
+  - scene-1016
+  reference_instance_tokens:
+  - fba1f3467c45425599569a1a85f1d947
+  reference_event_sample_range:
+  - 34
+  - 38
+  reference_peak_sample_idx: 38
+  expect_match: true
+  benchmark_group: scenario_d70f041998ca465991f1675a79483092_fba1f3467c45425599569a1a85f1d947
+  variant_type: scenario_canonical
+  query:
+    natural_language: an oncoming bus approaches ego in the same corridor
+    actors:
+    - bus
+    positions: []
+    behaviors:
+    - oncoming
+    risk_terms:
+    - risky
+    thresholds:
+      near_distance_m: 8.0
+      max_ttc_s: 3.0
+- id: scenario_d70f041998ca465991f1675a79483092_fba1f3467c45425599569a1a85f1d947_scenario_paraphrase
+  description: scene-1016 scenario_paraphrase
+  top_k: 3
+  candidate_pool: 12
+  apply_query_overrides: false
+  tags:
+  - scenario_mining
+  - paraphrase
+  - oncoming
+  reference_case_keys:
+  - d70f041998ca465991f1675a79483092:fba1f3467c45425599569a1a85f1d947
+  reference_scene_names:
+  - scene-1016
+  reference_instance_tokens:
+  - fba1f3467c45425599569a1a85f1d947
+  reference_event_sample_range:
+  - 34
+  - 38
+  reference_peak_sample_idx: 38
+  expect_match: true
+  benchmark_group: scenario_d70f041998ca465991f1675a79483092_fba1f3467c45425599569a1a85f1d947
+  variant_type: scenario_paraphrase
+  query:
+    natural_language: a bus approaches ego in the opposite direction
+    actors:
+    - bus
+    positions: []
+    behaviors:
+    - oncoming
     risk_terms:
     - risky
     thresholds:

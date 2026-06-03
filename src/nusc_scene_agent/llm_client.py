@@ -4,7 +4,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional
 from urllib import error, request
 
 
@@ -14,77 +14,49 @@ DEFAULT_TIMEOUT_S = 90.0
 @dataclass
 class LLMConfig:
     base_url: str
-    api_key: str
     model: str
     timeout_s: float = DEFAULT_TIMEOUT_S
 
     @classmethod
     def from_env(cls) -> Optional["LLMConfig"]:
         base_url = (
-            os.getenv("NUSC_SCENE_AGENT_LLM_BASE_URL")
-            or os.getenv("OPENAI_BASE_URL")
-            or os.getenv("OPENAI_API_BASE")
-            or ""
-        ).strip()
-        api_key = (
-            os.getenv("NUSC_SCENE_AGENT_LLM_API_KEY")
-            or os.getenv("OPENAI_API_KEY")
+            os.getenv("NUSC_SCENE_AGENT_OLLAMA_BASE_URL")
             or ""
         ).strip()
         model = (
-            os.getenv("NUSC_SCENE_AGENT_LLM_MODEL")
-            or os.getenv("OPENAI_MODEL")
+            os.getenv("NUSC_SCENE_AGENT_OLLAMA_MODEL")
             or ""
         ).strip()
-        if not (base_url and api_key and model):
+        if not (base_url and model):
             return None
-        return cls(base_url=base_url, api_key=api_key, model=model)
+        return cls(base_url=base_url, model=model)
 
 
 def _normalized_base_url(base_url: str) -> str:
     return base_url.rstrip("/")
 
 
-def _candidate_response_urls(base_url: str) -> List[str]:
+def _candidate_ollama_urls(base_url: str) -> List[str]:
     root = _normalized_base_url(base_url)
-    if root.endswith("/v1"):
-        return [root + "/responses"]
-    return [root + "/v1/responses", root + "/responses"]
+    if root.endswith("/api/chat"):
+        return [root]
+    return [root + "/api/chat"]
 
 
-def _post_json(url: str, payload: Dict[str, Any], api_key: str, timeout_s: float) -> Dict[str, Any]:
+def _post_json(url: str, payload: Dict[str, Any], timeout_s: float) -> Dict[str, Any]:
     body = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+    }
     req = request.Request(
         url=url,
         data=body,
         method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": "Bearer {0}".format(api_key),
-        },
+        headers=headers,
     )
     with request.urlopen(req, timeout=timeout_s) as resp:
         raw = resp.read().decode("utf-8")
     return json.loads(raw)
-
-
-def _extract_output_text(payload: Dict[str, Any]) -> str:
-    output_text = payload.get("output_text")
-    if isinstance(output_text, str) and output_text.strip():
-        return output_text.strip()
-
-    outputs = payload.get("output") or []
-    for item in outputs:
-        if not isinstance(item, dict) or item.get("type") != "message":
-            continue
-        content = item.get("content") or []
-        for part in content:
-            if not isinstance(part, dict):
-                continue
-            if part.get("type") == "output_text" and str(part.get("text") or "").strip():
-                return str(part.get("text")).strip()
-
-    raise ValueError("Responses API payload did not include output_text.")
 
 
 def _extract_json_text(text: str) -> str:
@@ -103,72 +75,42 @@ def _extract_json_text(text: str) -> str:
     return stripped
 
 
-def _extract_json_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
-    texts: List[str] = []
-    try:
-        texts.append(_extract_output_text(payload))
-    except Exception:  # noqa: BLE001
-        pass
-
-    outputs = payload.get("output") or []
-    for item in outputs:
-        if not isinstance(item, dict):
-            continue
-        for part in item.get("content") or []:
-            if isinstance(part, dict) and str(part.get("text") or "").strip():
-                texts.append(str(part.get("text")).strip())
-
-    last_error: Optional[Exception] = None
-    for text in texts:
-        try:
-            return json.loads(_extract_json_text(text))
-        except Exception as exc:  # noqa: BLE001
-            last_error = exc
-    raise RuntimeError("No JSON object could be extracted from Responses payload: {0}".format(last_error))
-
-
-def responses_json(
+def llm_json(
     config: LLMConfig,
     system_prompt: str,
     user_prompt: str,
-    max_tokens: Optional[int] = None,
     temperature: float = 0.0,
-    reasoning_effort: str = "low",
     max_retries: int = 3,
 ) -> Dict[str, Any]:
-    input_parts: List[Dict[str, Any]] = []
+    messages: List[Dict[str, str]] = []
     if system_prompt.strip():
-        input_parts.append(
-            {
-                "role": "system",
-                "content": [{"type": "input_text", "text": system_prompt}],
-            }
-        )
-    input_parts.append(
-        {
-            "role": "user",
-            "content": [{"type": "input_text", "text": user_prompt}],
-        }
-    )
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": user_prompt})
 
+    options: Dict[str, Any] = {"temperature": float(temperature)}
     payload: Dict[str, Any] = {
         "model": config.model,
-        "input": input_parts,
-        "temperature": float(temperature),
-        "reasoning": {"effort": reasoning_effort},
+        "messages": messages,
+        "stream": False,
+        "format": "json",
+        "options": options,
     }
-    if max_tokens is not None:
-        payload["max_output_tokens"] = int(max_tokens)
 
     last_error: Optional[Exception] = None
-    for url in _candidate_response_urls(config.base_url):
+    for url in _candidate_ollama_urls(config.base_url):
         for _ in range(max_retries):
             try:
-                response = _post_json(url, payload, config.api_key, config.timeout_s)
-                return _extract_json_payload(response)
+                response = _post_json(url, payload, config.timeout_s)
+                message = response.get("message")
+                text = str(message.get("content") or "") if isinstance(message, dict) else ""
+                if not text:
+                    text = str(response.get("response") or "")
+                if not text.strip():
+                    raise ValueError("Ollama response did not include message content.")
+                return json.loads(_extract_json_text(text))
             except error.HTTPError as exc:
                 error_text = exc.read().decode("utf-8", errors="replace")
                 last_error = RuntimeError("HTTP {0} from {1}: {2}".format(exc.code, url, error_text))
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
-    raise RuntimeError("LLM request failed: {0}".format(last_error))
+    raise RuntimeError("Ollama request failed: {0}".format(last_error))

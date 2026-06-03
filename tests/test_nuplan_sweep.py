@@ -1,0 +1,98 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from nusc_scene_agent.experiment_config import run_experiment_config
+from nusc_scene_agent.nuplan_sweep import run_nuplan_replay_sweep
+from test_nuplan_replay import _build_nuplan_db
+
+
+class NuPlanReplaySweepTest(unittest.TestCase):
+    def test_run_nuplan_replay_sweep_aggregates_studies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            split_a = root / "split_a"
+            split_b = root / "split_b"
+            split_a.mkdir()
+            split_b.mkdir()
+            _build_nuplan_db(split_a / "a.db")
+            _build_nuplan_db(split_b / "b.db")
+
+            output_dir = root / "sweep"
+            payload = run_nuplan_replay_sweep(
+                studies=[
+                    {"name": "city_a", "split_dir": str(split_a)},
+                    {"name": "city_b", "split_dir": str(split_b)},
+                ],
+                output_dir=output_dir,
+                defaults={
+                    "max_dbs": 1,
+                    "max_cases": 1,
+                    "max_cases_per_db": 1,
+                    "history_s": 0.5,
+                    "future_s": 1.0,
+                    "frame_hz": 2.0,
+                    "profiles": ["logged_ego", "stopped"],
+                },
+            )
+
+            self.assertEqual(payload["schema"], "nuplan_replay_sweep_v1")
+            self.assertEqual(payload["overview"]["study_count"], 2)
+            self.assertEqual(payload["overview"]["case_count"], 2)
+            self.assertEqual(payload["overview"]["profile_count"], 2)
+            self.assertTrue((output_dir / "nuplan_replay_sweep_summary.json").exists())
+            self.assertTrue((output_dir / "nuplan_replay_sweep_leaderboard.csv").exists())
+            self.assertTrue((output_dir / "nuplan_replay_sweep_family_matrix.csv").exists())
+            self.assertTrue((output_dir / "nuplan_replay_sweep_failure_taxonomy.csv").exists())
+            self.assertTrue((output_dir / "artifact_manifest.json").exists())
+
+            overall_rows = [
+                row for row in payload["profile_leaderboard"] if row["study_name"] == "__overall__"
+            ]
+            self.assertEqual({row["profile_name"] for row in overall_rows}, {"logged_ego", "stopped"})
+
+    def test_experiment_config_supports_nuplan_replay_sweep(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            split_dir = root / "split"
+            split_dir.mkdir()
+            _build_nuplan_db(split_dir / "mini.db")
+            config_path = root / "sweep.yaml"
+            output_dir = root / "outputs"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "experiment:",
+                        "  id: sweep_test",
+                        "  type: nuplan_replay_sweep",
+                        f"  output: {output_dir}",
+                        f"  result_path: {output_dir / 'result.json'}",
+                        "nuplan_replay_sweep:",
+                        f"  output: {output_dir}",
+                        "  defaults:",
+                        "    max_dbs: 1",
+                        "    max_cases: 1",
+                        "    max_cases_per_db: 1",
+                        "    history_s: 0.5",
+                        "    future_s: 1.0",
+                        "    frame_hz: 2.0",
+                        "    profiles:",
+                        "      - logged_ego",
+                        "  studies:",
+                        "    - name: mini_fixture",
+                        f"      split_dir: {split_dir}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_experiment_config(config_path)
+            self.assertEqual(result["experiment_type"], "nuplan_replay_sweep")
+            self.assertEqual(result["result"]["overview"]["case_count"], 1)
+            written = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
+            self.assertEqual(written["experiment_id"], "sweep_test")
+
+
+if __name__ == "__main__":
+    unittest.main()

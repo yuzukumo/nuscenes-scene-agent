@@ -41,11 +41,11 @@ class LLMRerankerTest(unittest.TestCase):
             max_ttc_s=5.0,
         )
         candidates = [make_candidate(1), make_candidate(2), make_candidate(3)]
-        with patch("nusc_scene_agent.llm_reranker.responses_json", return_value={"ranking": [3, 1]}):
+        with patch("nusc_scene_agent.llm_reranker.llm_json", return_value={"ranking": [3, 1]}):
             reranked = rerank_candidates_with_llm(
                 query,
                 candidates,
-                LLMConfig(base_url="https://example.com", api_key="key", model="model"),
+                LLMConfig(base_url="http://127.0.0.1:11434", model="gemma4:latest"),
             )
         self.assertEqual([item.ann_token for item in reranked], ["ann-3", "ann-1", "ann-2"])
 
