@@ -77,6 +77,16 @@ def build_default_benchmark_registry() -> Dict[str, Any]:
             outputs=["replay benchmark", "rollout metrics", "comparison leaderboard", "sweep summary", "case-study figures"],
             metrics=["ego ADE", "ego FDE", "min-distance error", "min-TTC error", "risk fidelity"],
         ),
+        BenchmarkLayerSpec(
+            layer_id="nuplan_closed_loop_replay",
+            dataset="nuPlan",
+            task="closed-loop replay simulation",
+            description="Roll ego state forward with planner profiles while replaying logged actors and traffic-light context.",
+            default_command="python -m nusc_scene_agent run-experiment-config --config configs/nuplan_closed_loop_sweep_medium.yaml",
+            inputs=["nuPlan SQLite splits", "closed-loop planner profiles"],
+            outputs=["closed-loop benchmarks", "closed-loop metrics", "cross-split leaderboard CSV", "case-study figures"],
+            metrics=["ego ADE", "progress ratio", "collision proxy mismatch", "comfort violation", "closed-loop score"],
+        ),
     ]
     return {
         "schema": BENCHMARK_REGISTRY_SCHEMA,

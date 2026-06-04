@@ -5,7 +5,7 @@ experiment:
   result_path: outputs/risk_benchmark_suite_v1/experiment_result.json
 
 risk_benchmark_suite:
-  case_library: outputs/trainval_suite_llm_hybrid_en_v1/case_library_enriched.json
+  case_library: outputs/trainval_case_library_v1/case_library_enriched.json
   db: artifacts/index/v1.0-trainval.sqlite
   max_cases: 24
   scenario_output: benchmarks/trainval_scenario_mining_v1.yaml

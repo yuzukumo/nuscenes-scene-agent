@@ -41,11 +41,6 @@ Download the dataset files yourself and place them under `archives/` before runn
 - `v1.0-trainval10_blobs.tgz`
   - https://motional-nuscenes.s3.amazonaws.com/public/v1.0/v1.0-trainval10_blobs.tgz
 
-### Optional CAN Bus
-
-- `can_bus.zip`
-  - https://d36yt3mvayqw5m.cloudfront.net/public/v1.0/can_bus.zip
-
 ## Expected Local Layout
 
 ```text
@@ -61,7 +56,7 @@ archives/
     v1.0-trainval10_blobs.tgz
 ```
 
-## Optional nuPlan Data
+## nuPlan Data
 
 Download `nuPlan` files from the official `nuPlan` dataset page. The replay-regression extension expects extracted files under:
 

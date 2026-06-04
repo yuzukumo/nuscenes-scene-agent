@@ -2,7 +2,7 @@
 
 ## System Goal
 
-This project turns free-form risky-scene descriptions into validated `nuScenes` cases and benchmark-ready artifacts. It also includes a lightweight `nuPlan` replay-regression extension for simulation-style evaluation.
+This project turns free-form risky-scene descriptions into validated `nuScenes` cases and benchmark-ready artifacts. It also includes `nuPlan` replay-regression and closed-loop replay extensions for simulation-style evaluation.
 
 The target workflow is:
 
@@ -54,10 +54,12 @@ The target workflow is:
 - export scenario-conditioned perception slices and model-agnostic evaluation summaries for external BEV tracking outputs
 - export sparse BEV occupancy slices for primary and context actor coverage analysis
 - export scenario-conditioned world-model slices with future trajectory and occupancy supervision
-- export replay-ready JSONL or optional MCAP assets for offline system testing
+- export replay-ready JSONL assets and MCAP assets for offline system testing
 - export compact `nuPlan` replay-regression cases from SQLite scenario tags
+- export cross-split `nuPlan` closed-loop replay summaries
 - export Ollama-generated benchmark review reports from local artifacts
 - export unified risk-case collections, benchmark-layer registries, dataset-backend inventories, and artifact manifests
+- export a result registry that summarizes completed benchmark layers and key metrics
 
 ## 6. Counterfactual Benchmark Generation
 
@@ -69,7 +71,7 @@ The generator:
 - creates positive canonical and paraphrase variants
 - creates actor-swap and behavior-swap negatives
 - keeps explicit `reference_case_keys` for objective evaluation
-- optionally carries reference event windows for localization-aware scoring
+- carries reference event windows for localization-aware scoring when the source case provides event localization
 
 This extends the repository from case retrieval to benchmark construction and contrastive evaluation.
 
@@ -172,7 +174,7 @@ The layer also includes:
 - multi-profile comparison exports for behavior-wise and risk-wise analysis
 - challenge-track breakdowns for benchmark-style reporting
 - qualitative case-study rendering for benchmark-aligned trajectory comparisons
-- replay export as newline-delimited JSON and optional `MCAP`
+- replay export as newline-delimited JSON and `MCAP`
 
 ## 11. nuPlan Replay-Regression Extension
 
@@ -187,6 +189,7 @@ Each case stores:
 - traffic-light status counts for the replay window
 - risk targets such as minimum actor distance, minimum TTC, and collision-proxy consistency
 - comfort targets such as maximum acceleration, jerk, and yaw rate
+- automatic `history_kinematic` ego rollouts estimated from pre-anchor ego motion
 
 The evaluation layer compares predicted ego rollouts against logged replay windows with:
 
@@ -205,7 +208,35 @@ The evaluation layer compares predicted ego rollouts against logged replay windo
 
 This extension is a compact regression harness that connects the repository to simulation-style testing while preserving the main scope of dataset indexing, scenario mining, and benchmark generation.
 
-## 12. Unified Benchmark Interface
+## 12. nuPlan Closed-Loop Replay
+
+The closed-loop replay extension uses the same mined `nuPlan` replay cases, but rolls the ego state forward with planner profiles instead of reading the future ego state from the log at each step.
+
+The simulation loop keeps:
+
+- logged actors and traffic-light context from the replay window
+- simulated ego state from the previous planner step
+- planner commands for acceleration and yaw rate
+- accumulated trajectory error, progress, collision-proxy mismatch, comfort violations, and closed-loop score
+
+The scope is replay-based closed-loop ego simulation. Surrounding agents are replayed from logs, which keeps the scene context deterministic while exposing accumulated ego-state error.
+
+## 13. Full Benchmark Suite
+
+The default full-suite entry point is `configs/full_benchmark_suite.yaml`.
+
+It executes:
+
+- case-library generation from trainval scenario queries
+- `nuScenes` scenario-mining, perception, BEV occupancy, and world-model benchmark generation
+- `nuPlan` cross-split replay-regression sweep
+- `nuPlan` cross-split closed-loop replay sweep
+- model-in-the-loop failure mining
+- result-registry export
+
+Each stage writes a separate experiment result, while the suite writes a compact top-level summary. Individual benchmark layers remain reusable through the same structured config interface.
+
+## 14. Unified Benchmark Interface
 
 The project exposes a structural layer above individual benchmark implementations.
 
@@ -213,6 +244,7 @@ The interface includes:
 
 - `unified_risk_case_v1` for common case metadata across `nuScenes` and `nuPlan`
 - `benchmark_registry_v1` for declaring benchmark layers, inputs, outputs, and metrics
+- `benchmark_result_registry_v1` for summarizing completed benchmark-layer results
 - `dataset_backend_inventory_v1` for checking local `nuScenes` and `nuPlan` readiness
 - `benchmark_artifact_manifest_v1` for recording benchmark outputs and evidence artifacts
 - YAML experiment configs for reproducible study entry points
@@ -221,7 +253,7 @@ Benchmark-specific schemas remain the source of task-level detail. The interface
 
 The default `nuScenes` benchmark suite is generated through `configs/risk_benchmark_suite.yaml`. This config derives scenario-mining queries, perception slices, world-model slices, sparse BEV occupancy slices, and proxy-study outputs from the same validated case library and SQLite index. The default `max_cases` controls the exported benchmark size; it is a sampling cap rather than a dataset-size estimate.
 
-## 13. Structural Multimodal Retrieval
+## 15. Structural Multimodal Retrieval
 
 The retrieval pipeline includes a deterministic multimodal reranking layer. It scores each candidate with four structural signals:
 
@@ -232,7 +264,7 @@ The retrieval pipeline includes a deterministic multimodal reranking layer. It s
 
 The module writes per-candidate modality scores and fused scores to JSON, CSV, and Markdown. It is an auditable retrieval model for scene mining; learned perception backbones remain outside this layer.
 
-## 14. Learned Scene Reranking
+## 16. Learned Scene Reranking
 
 The learned retrieval layer trains a compact PyTorch query-scene scorer from weakly labeled `v1.0-trainval` scenario families.
 
@@ -245,13 +277,15 @@ Training data is constructed from:
 - candidate features from BEV geometry, motion, TTC, and sensor visibility
 - explicit query-candidate compatibility features
 
-The model is a small pairwise MLP rather than an end-to-end perception or driving model. It is used only as a reranker after candidate retrieval. The trained checkpoint is evaluated both on weak-supervised held-out scenes and on the reference-aware scenario-mining benchmark.
+The model is a compact pairwise MLP for post-retrieval query-scene scoring. The trained checkpoint is evaluated on weak-supervised held-out scenes and on the reference-aware scenario-mining benchmark.
 
 Outputs include a checkpoint, JSON training report, Markdown training summary, and per-query learned retrieval reports. The trained checkpoint can be used through `--rerank-mode learned`.
 
-## 15. Model-in-the-loop Failure Mining
+The failure-aware diagnostic evaluates the learned retriever on update queries produced by failure mining. The learned model expands candidate coverage, and deterministic validation performs final case selection.
 
-The failure-mining layer reads metric artifacts from perception, BEV occupancy, world-model, external forecast, and `nuPlan` replay-regression studies.
+## 17. Model-in-the-loop Failure Mining
+
+The failure-mining layer reads metric artifacts from perception, BEV occupancy, world-model, external forecast, `nuPlan` replay-regression, and `nuPlan` closed-loop replay studies.
 
 It exports:
 
@@ -261,7 +295,7 @@ It exports:
 
 This creates a closed evaluation loop: model outputs are evaluated, failure patterns are mined, and new retrieval queries are generated from the observed failures.
 
-## 16. Research Agent
+## 18. Research Agent
 
 The research-agent layer is a LangGraph workflow that reads local benchmark artifacts and calls a local Ollama model.
 
@@ -273,7 +307,7 @@ The graph uses three nodes:
 
 Deterministic metrics remain the evidence source. The agent operates after evaluation and is used to inspect completed capabilities, identify remaining gaps, propose benchmark update queries, and list unsupported claims.
 
-## Agent Formulation
+## 19. Agent Formulation
 
 The agent component is implemented as an orchestration loop:
 
@@ -285,7 +319,7 @@ The agent component is implemented as an orchestration loop:
 
 This is a hybrid orchestration pattern: a local Ollama model handles intent interpretation, while deterministic code handles evidence generation and reproducibility.
 
-## Hybrid Formulation
+## 20. Hybrid Formulation
 
 The `hybrid_agent` evaluates rule and local-model outputs as separate hypotheses before selecting an evidence-supported result:
 
@@ -294,11 +328,11 @@ The `hybrid_agent` evaluates rule and local-model outputs as separate hypotheses
 - retrieves and validates cases for each hypothesis
 - chooses the most evidence-supported interpretation at runtime
 
-This design is intended to reduce instability relative to direct union of planner outputs on the language-robustness benchmark.
+This design exposes planner disagreement and records the selected evidence-supported hypothesis in the query report.
 
-## Scope Boundaries
+## 21. Scope Boundaries
 
-The maintained scope is indexing, retrieval, validation, reranking, benchmark generation, external-baseline adapters, and compact replay regression.
+The maintained scope is indexing, retrieval, validation, reranking, benchmark generation, external-baseline adapters, replay regression, and closed-loop replay evaluation.
 
 Large-stack components remain outside the repository scope:
 

@@ -1,6 +1,6 @@
 metadata:
   generator: scenario_mining_benchmark_generator_v1
-  source_case_library: outputs/trainval_suite_llm_hybrid_en_v1/case_library_enriched.json
+  source_case_library: outputs/trainval_case_library_v1/case_library_enriched.json
   anchor_case_count: 24
   query_count: 48
 queries:

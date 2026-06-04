@@ -60,7 +60,7 @@ class DataUtilsTest(unittest.TestCase):
             resolved = resolve_archives(root, ["mini/v1.0-mini.tgz"])
             self.assertEqual(resolved, [archive.resolve()])
 
-    def test_resolve_trainval_profile_prefers_metadata_and_maps_for_mvp(self) -> None:
+    def test_resolve_trainval_profile_prefers_metadata_and_maps_for_smoke_setup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             trainval = root / "archives" / "trainval"

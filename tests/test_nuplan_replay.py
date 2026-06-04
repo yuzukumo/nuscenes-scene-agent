@@ -248,8 +248,10 @@ class NuPlanReplayTest(unittest.TestCase):
             db_path = split_dir / "mini.db"
             benchmark_path = root / "nuplan_replay.json"
             predictions_path = root / "logged_ego_rollouts.json"
+            history_predictions_path = root / "history_kinematic_rollouts.json"
             stopped_predictions_path = root / "stopped_rollouts.json"
             eval_dir = root / "eval"
+            history_eval_dir = root / "history_eval"
             stopped_eval_dir = root / "stopped_eval"
             comparison_dir = root / "comparison"
             case_studies_dir = root / "case_studies"
@@ -302,6 +304,25 @@ class NuPlanReplayTest(unittest.TestCase):
             self.assertTrue((eval_dir / "nuplan_replay_case_metrics.csv").exists())
             self.assertTrue((eval_dir / "nuplan_replay_metrics_summary.md").exists())
 
+            history_metadata = generate_nuplan_proxy_rollouts(
+                benchmark_path=benchmark_path,
+                output_path=history_predictions_path,
+                profile_name="history_kinematic",
+            )
+            self.assertEqual(history_metadata["profile_name"], "history_kinematic")
+            self.assertIn("pre-anchor ego motion", history_metadata["profile_description"])
+            history_payload = json.loads(history_predictions_path.read_text(encoding="utf-8"))
+            history_states = history_payload["predictions"][0]["future_ego_states"]
+            self.assertEqual(len(history_states), 3)
+            self.assertAlmostEqual(history_states[-1]["x"], 4.0)
+            history_summary = evaluate_nuplan_rollouts(
+                benchmark_path=benchmark_path,
+                predictions_path=history_predictions_path,
+                output_dir=history_eval_dir,
+            )
+            self.assertEqual(history_summary["overview"]["full_horizon_count"], 1)
+            self.assertAlmostEqual(history_summary["overview"]["mean_ego_ade_m"], 0.0)
+
             generate_nuplan_proxy_rollouts(
                 benchmark_path=benchmark_path,
                 output_path=stopped_predictions_path,
@@ -314,10 +335,10 @@ class NuPlanReplayTest(unittest.TestCase):
             )
 
             comparison = compare_nuplan_replay_evaluations(
-                evaluation_dirs=[eval_dir, stopped_eval_dir],
+                evaluation_dirs=[eval_dir, history_eval_dir, stopped_eval_dir],
                 output_dir=comparison_dir,
             )
-            self.assertEqual(comparison["overview"]["profile_count"], 2)
+            self.assertEqual(comparison["overview"]["profile_count"], 3)
             self.assertEqual(comparison["overview"]["case_count"], 1)
             self.assertTrue((comparison_dir / "nuplan_replay_comparison.json").exists())
             self.assertTrue((comparison_dir / "nuplan_replay_leaderboard.csv").exists())
@@ -325,7 +346,7 @@ class NuPlanReplayTest(unittest.TestCase):
 
             case_study_metadata = render_nuplan_replay_case_studies(
                 benchmark_path=benchmark_path,
-                evaluation_dirs=[eval_dir, stopped_eval_dir],
+                evaluation_dirs=[eval_dir, history_eval_dir, stopped_eval_dir],
                 output_dir=case_studies_dir,
                 max_cases=1,
             )

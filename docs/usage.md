@@ -1,6 +1,6 @@
 # Usage
 
-This page contains the main commands for reproducing local experiments. Generated outputs are written under `outputs/` and are excluded from version control.
+This page lists commands for reproducing the local benchmark pipeline. Generated files are written under `outputs/`, `artifacts/`, or `external/`; these directories are excluded from version control.
 
 ## Environment
 
@@ -9,7 +9,7 @@ conda env create -f environment.yml
 conda activate nuscenes
 ```
 
-If the environment already exists:
+To update an existing environment:
 
 ```bash
 conda env update -f environment.yml --prune
@@ -18,78 +18,72 @@ conda activate nuscenes
 
 ## Data Preparation
 
-Check archive readiness:
+Check local archives:
 
 ```bash
 python -m nusc_scene_agent inspect-archives --workspace .
 ```
 
-Prepare `v1.0-mini`:
-
-```bash
-python -m nusc_scene_agent prepare-data --workspace . --profile mini
-```
-
-Prepare `v1.0-trainval`:
+Prepare `nuScenes v1.0-trainval` with map expansion:
 
 ```bash
 python -m nusc_scene_agent prepare-data --workspace . --profile trainval-full
 ```
 
-Build indices:
+Build the trainval index:
 
 ```bash
-python -m nusc_scene_agent build-index \
-  --version v1.0-mini \
-  --dataroot data/sets/nuscenes \
-  --db artifacts/index/v1.0-mini.sqlite
-
 python -m nusc_scene_agent build-index \
   --version v1.0-trainval \
   --dataroot data/sets/nuscenes \
   --db artifacts/index/v1.0-trainval.sqlite
 ```
 
-## Ollama Query Modes
+## Local LLM
 
-Rule-only retrieval runs without model configuration. The `llm` query mode, `hybrid` query mode, `llm` reranker, and research-agent commands use a local Ollama server.
+The benchmark suite uses an Ollama server for structured query planning and artifact review. Run `ollama serve` in a separate shell if the service is not already active.
+
+```bash
+ollama pull gemma4:latest
+ollama serve
+```
+
+The default endpoint and model are also configurable:
 
 ```bash
 export NUSC_SCENE_AGENT_OLLAMA_BASE_URL="http://127.0.0.1:11434"
 export NUSC_SCENE_AGENT_OLLAMA_MODEL="gemma4:latest"
 ```
 
-Run a hybrid benchmark:
+## End-to-End Suite
 
 ```bash
-python -m nusc_scene_agent benchmark \
-  --config benchmarks/trainval_suite_v1.yaml \
-  --db artifacts/index/v1.0-trainval.sqlite \
-  --output outputs/trainval_suite_llm_hybrid_en_v1 \
-  --query-mode hybrid \
-  --rerank-mode llm
+python -m nusc_scene_agent run-full-benchmark-suite
 ```
 
-## Benchmark Suite
+This executes the configured pipeline in [configs/full_benchmark_suite.yaml](../configs/full_benchmark_suite.yaml):
+
+- case-library generation from `benchmarks/trainval_suite_v1.yaml`
+- `nuScenes` scenario-mining, perception, BEV occupancy, and world-model benchmark generation
+- `nuPlan` replay-regression sweep
+- `nuPlan` closed-loop replay sweep
+- model-in-the-loop failure mining
+- result-registry export
+
+## Stage-Level Commands
+
+Run the `nuScenes` benchmark layers from an existing case library:
 
 ```bash
 python -m nusc_scene_agent run-experiment-config \
   --config configs/risk_benchmark_suite.yaml
 ```
 
-This generates scenario-mining, perception, BEV occupancy, and world-model benchmark artifacts, then runs proxy studies for the derived benchmark layers.
-
-## Learned Scene Reranking
-
-Install the optional dependency:
+Train the weakly supervised query-scene reranker:
 
 ```bash
 pip install -e ".[learned]"
-```
 
-Train the reranker:
-
-```bash
 python -m nusc_scene_agent train-large-learned-retriever \
   --db artifacts/index/v1.0-trainval.sqlite \
   --output outputs/learned_retriever_trainval_large_v2 \
@@ -98,53 +92,30 @@ python -m nusc_scene_agent train-large-learned-retriever \
   --negatives-per-query 12
 ```
 
-Use the checkpoint:
+Evaluate failure-aware candidate generation:
 
 ```bash
-python -m nusc_scene_agent query \
-  "pedestrian crossing close in front of ego with dense surrounding traffic context" \
-  --db artifacts/index/v1.0-trainval.sqlite \
-  --output outputs/learned_query_demo_v1 \
-  --query-mode rule \
-  --rerank-mode learned \
-  --learned-reranker-checkpoint outputs/learned_retriever_trainval_large_v2/learned_retriever.pt
+python -m nusc_scene_agent run-experiment-config \
+  --config configs/failure_aware_reranking.yaml
 ```
 
-## Structural Multimodal Reranking
+Run structural multimodal retrieval for a single query:
 
 ```bash
 python -m nusc_scene_agent run-multimodal-retrieval \
   "pedestrian crossing close in front of ego with dense surrounding traffic context" \
   --db artifacts/index/v1.0-trainval.sqlite \
-  --output outputs/multimodal_retrieval_demo_v1 \
+  --output outputs/multimodal_retrieval_v1 \
   --top-k 10 \
   --candidate-pool 64
-
-python -m nusc_scene_agent query \
-  "pedestrian crossing close in front of ego with dense surrounding traffic context" \
-  --db artifacts/index/v1.0-trainval.sqlite \
-  --output outputs/multimodal_query_demo_v1 \
-  --query-mode rule \
-  --rerank-mode multimodal
 ```
 
-## ContextVAE World-Model Baseline
-
-Install optional forecast dependencies:
+Run the `ContextVAE` world-model baseline:
 
 ```bash
 pip install -e ".[forecast]"
-```
-
-Clone the external repository:
-
-```bash
 git clone https://github.com/xupei0610/ContextVAE.git external/ContextVAE
-```
 
-Run the integration:
-
-```bash
 python -m nusc_scene_agent run-contextvae-world-model-study \
   --benchmark benchmarks/trainval_world_model_slices_v1.json \
   --dataroot data/sets/nuscenes \
@@ -158,38 +129,19 @@ python -m nusc_scene_agent run-contextvae-world-model-study \
   --clustering-samples 2000
 ```
 
-If the checkpoint is missing, the integration downloads the public `nuscenes_res18` release automatically.
-
-## nuPlan Replay Regression
-
-After extracting `nuPlan` under `data/nuplan/dataset`:
+Run `nuPlan` replay and closed-loop sweeps:
 
 ```bash
 python -m nusc_scene_agent inspect-nuplan --dataset-root data/nuplan/dataset
 
-python -m nusc_scene_agent run-nuplan-replay-study \
-  --split-dir data/nuplan/dataset/nuplan-v1.1/splits/mini \
-  --output outputs/nuplan_mini_replay_study_v2 \
-  --max-dbs 64 \
-  --max-cases 16 \
-  --max-cases-per-db 4
-```
-
-Equivalent YAML entry point:
-
-```bash
-python -m nusc_scene_agent run-experiment-config \
-  --config configs/nuplan_replay_mini.yaml
-```
-
-Cross-split sweep:
-
-```bash
 python -m nusc_scene_agent run-experiment-config \
   --config configs/nuplan_replay_sweep_medium.yaml
+
+python -m nusc_scene_agent run-experiment-config \
+  --config configs/nuplan_closed_loop_sweep_medium.yaml
 ```
 
-## Failure Mining
+Run failure mining from generated metric artifacts:
 
 ```bash
 python -m nusc_scene_agent run-failure-mining \
@@ -197,26 +149,28 @@ python -m nusc_scene_agent run-failure-mining \
   --input outputs/trainval_world_model_proxy_study_v1 \
   --input outputs/contextvae_world_model_study_v1 \
   --input outputs/nuplan_replay_sweep_v1 \
+  --input outputs/nuplan_closed_loop_sweep_v1 \
   --output outputs/model_in_the_loop_failure_mining_v1 \
-  --max-queries 16
+  --max-queries 24
 ```
 
-## Research Agent
+Export the result registry:
 
-Install optional LangGraph support:
+```bash
+python -m nusc_scene_agent run-experiment-config \
+  --config configs/result_registry.yaml
+```
+
+Run the LangGraph artifact review workflow:
 
 ```bash
 pip install -e ".[agent]"
-```
 
-Run the Ollama-backed artifact review:
-
-```bash
 python -m nusc_scene_agent run-research-agent \
   --output outputs/research_agent_review_v1
 ```
 
-## Registry and Backend Inspection
+Inspect local benchmark and dataset metadata:
 
 ```bash
 python -m nusc_scene_agent inspect-dataset-backends \

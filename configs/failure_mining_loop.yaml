@@ -13,3 +13,4 @@ failure_mining:
     - outputs/trainval_world_model_proxy_study_v1
     - outputs/contextvae_world_model_study_v1
     - outputs/nuplan_replay_sweep_v1
+    - outputs/nuplan_closed_loop_sweep_v1

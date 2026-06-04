@@ -1,0 +1,13 @@
+experiment:
+  id: result_registry
+  type: result_registry
+  output: outputs/full_benchmark_suite_v1/result_registry
+  result_path: outputs/full_benchmark_suite_v1/result_registry/experiment_result.json
+
+result_registry:
+  output: outputs/full_benchmark_suite_v1/result_registry
+  sources:
+    - outputs/risk_benchmark_suite_v1/experiment_result.json
+    - outputs/nuplan_replay_sweep_v1/nuplan_replay_sweep_summary.json
+    - outputs/nuplan_closed_loop_sweep_v1/nuplan_closed_loop_sweep_summary.json
+    - outputs/model_in_the_loop_failure_mining_v1/failure_mining_report.json

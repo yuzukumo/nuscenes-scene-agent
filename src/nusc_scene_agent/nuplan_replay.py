@@ -26,7 +26,7 @@ DEFAULT_NUPLAN_DATASET_ROOT = Path("data/nuplan/dataset")
 DEFAULT_NUPLAN_SPLIT = DEFAULT_NUPLAN_DATASET_ROOT / "nuplan-v1.1/splits/mini"
 DEFAULT_NUPLAN_REPLAY_BENCHMARK = Path("outputs/nuplan_replay_benchmark.json")
 
-NUPLAN_REPLAY_PROFILES = ["logged_ego", "constant_velocity", "stopped"]
+NUPLAN_REPLAY_PROFILES = ["logged_ego", "history_kinematic", "constant_velocity", "stopped"]
 
 DEFAULT_SCENARIO_TAG_PRIORITY = [
     "near_pedestrian_on_crosswalk",
@@ -58,6 +58,9 @@ NUPLAN_HISTORY_COLOR = "#303030"
 NUPLAN_LOGGED_EGO_COLOR = "#1f6f99"
 NUPLAN_ACTOR_COLOR = "#c44e38"
 NUPLAN_PROFILE_COLORS = ["#2a9d8f", "#c46a00", "#6f4e7c", "#6b8e23", "#7a1f1f"]
+
+KINEMATIC_ACCELERATION_LIMIT_MPS2 = 4.0
+KINEMATIC_YAW_RATE_LIMIT_RPS = 0.8
 
 
 @dataclass(frozen=True)
@@ -197,6 +200,7 @@ def generate_nuplan_proxy_rollouts(
     for case in benchmark.get("cases", []):
         anchor = case["anchor_frame"]
         future_frames = case["future_frames"]
+        kinematic_context = _history_kinematic_context(case) if profile_name == "history_kinematic" else {}
         anchor_ts = int(anchor["timestamp_us"])
         anchor_x = float(anchor["ego"]["x"])
         anchor_y = float(anchor["ego"]["y"])
@@ -217,6 +221,16 @@ def generate_nuplan_proxy_rollouts(
                 acceleration_x = float(ego.get("acceleration_x", 0.0))
                 acceleration_y = float(ego.get("acceleration_y", 0.0))
                 angular_rate_z = float(ego.get("angular_rate_z", 0.0))
+            elif profile_name == "history_kinematic":
+                state = _history_kinematic_state_at(kinematic_context, timestamp_us)
+                x = state["x"]
+                y = state["y"]
+                yaw = state["yaw"]
+                vx = state["vx"]
+                vy = state["vy"]
+                acceleration_x = state["acceleration_x"]
+                acceleration_y = state["acceleration_y"]
+                angular_rate_z = state["angular_rate_z"]
             elif profile_name == "constant_velocity":
                 x = anchor_x + anchor_vx * dt
                 y = anchor_y + anchor_vy * dt
@@ -255,6 +269,7 @@ def generate_nuplan_proxy_rollouts(
         "metadata": {
             "schema": "nuplan_ego_rollout_predictions_v1",
             "profile_name": profile_name,
+            "profile_description": _nuplan_replay_profile_description(profile_name),
             "benchmark_path": str(benchmark_path),
             "prediction_count": len(predictions),
         },
@@ -385,7 +400,7 @@ def render_nuplan_replay_case_studies(
 
 def run_nuplan_replay_study(
     split_dir: Path = DEFAULT_NUPLAN_SPLIT,
-    output_dir: Path = Path("outputs/nuplan_mini_replay_study_v2"),
+    output_dir: Path = Path("outputs/nuplan_replay_study_v1"),
     *,
     max_dbs: int = 4,
     max_cases: int = 16,
@@ -2254,6 +2269,127 @@ def _format_optional_float(value: Any) -> str:
     if value is None:
         return "n/a"
     return f"{float(value):.3f}"
+
+
+def _nuplan_replay_profile_description(profile_name: str) -> str:
+    descriptions = {
+        "logged_ego": "Logged future ego trajectory used as an oracle reference.",
+        "history_kinematic": (
+            "Automatic history-conditioned kinematic rollout estimated from pre-anchor ego motion."
+        ),
+        "constant_velocity": "Constant-velocity rollout from the anchor ego state.",
+        "stopped": "Stationary ego rollout at the anchor pose.",
+    }
+    return descriptions.get(profile_name, "")
+
+
+def _history_kinematic_context(case: Dict[str, Any]) -> Dict[str, float]:
+    anchor = case["anchor_frame"]
+    anchor_ts = int(anchor["timestamp_us"])
+    anchor_ego = anchor["ego"]
+    anchor_yaw = float(anchor_ego.get("yaw", 0.0))
+    history_frames = [
+        frame
+        for frame in case.get("frames", [])
+        if int(frame.get("timestamp_us", 0)) <= anchor_ts
+    ]
+    history_frames.sort(key=lambda frame: int(frame.get("timestamp_us", 0)))
+    if not history_frames or int(history_frames[-1].get("timestamp_us", 0)) != anchor_ts:
+        history_frames.append(anchor)
+
+    speed = float(anchor_ego.get("speed_mps", math.hypot(float(anchor_ego.get("vx", 0.0)), float(anchor_ego.get("vy", 0.0)))))
+    acceleration = _longitudinal_acceleration(anchor_ego)
+    yaw_rate = float(anchor_ego.get("angular_rate_z", 0.0))
+
+    if len(history_frames) >= 2:
+        prev = history_frames[-2]
+        curr = history_frames[-1]
+        prev_ts = int(prev["timestamp_us"])
+        curr_ts = int(curr["timestamp_us"])
+        dt = max((curr_ts - prev_ts) / 1_000_000.0, 1e-6)
+        prev_ego = prev["ego"]
+        curr_ego = curr["ego"]
+        dx = float(curr_ego["x"]) - float(prev_ego["x"])
+        dy = float(curr_ego["y"]) - float(prev_ego["y"])
+        measured_speed = math.hypot(dx, dy) / dt
+        speed = measured_speed if math.isfinite(measured_speed) else speed
+        yaw_rate = _angle_diff(float(curr_ego.get("yaw", 0.0)), float(prev_ego.get("yaw", 0.0))) / dt
+
+    if len(history_frames) >= 3:
+        prev_prev = history_frames[-3]
+        prev = history_frames[-2]
+        curr = history_frames[-1]
+        prev_speed = _frame_pair_speed(prev_prev, prev)
+        curr_speed = _frame_pair_speed(prev, curr)
+        dt = max((int(curr["timestamp_us"]) - int(prev["timestamp_us"])) / 1_000_000.0, 1e-6)
+        acceleration = (curr_speed - prev_speed) / dt
+
+    return {
+        "anchor_timestamp_us": float(anchor_ts),
+        "x": float(anchor_ego["x"]),
+        "y": float(anchor_ego["y"]),
+        "yaw": anchor_yaw,
+        "speed_mps": max(0.0, speed),
+        "acceleration_mps2": _clamp(acceleration, -KINEMATIC_ACCELERATION_LIMIT_MPS2, KINEMATIC_ACCELERATION_LIMIT_MPS2),
+        "yaw_rate_rps": _clamp(yaw_rate, -KINEMATIC_YAW_RATE_LIMIT_RPS, KINEMATIC_YAW_RATE_LIMIT_RPS),
+    }
+
+
+def _history_kinematic_state_at(context: Dict[str, float], timestamp_us: int) -> Dict[str, float]:
+    anchor_ts = int(context.get("anchor_timestamp_us", timestamp_us))
+    horizon_s = max((int(timestamp_us) - anchor_ts) / 1_000_000.0, 0.0)
+    x = float(context.get("x", 0.0))
+    y = float(context.get("y", 0.0))
+    yaw = float(context.get("yaw", 0.0))
+    speed = max(0.0, float(context.get("speed_mps", 0.0)))
+    acceleration = float(context.get("acceleration_mps2", 0.0))
+    yaw_rate = float(context.get("yaw_rate_rps", 0.0))
+
+    remaining = horizon_s
+    while remaining > 1e-9:
+        step = min(0.1, remaining)
+        next_speed = max(0.0, speed + acceleration * step)
+        distance = 0.5 * (speed + next_speed) * step
+        mid_yaw = yaw + 0.5 * yaw_rate * step
+        x += math.cos(mid_yaw) * distance
+        y += math.sin(mid_yaw) * distance
+        yaw = _normalize_angle(yaw + yaw_rate * step)
+        speed = next_speed
+        remaining -= step
+
+    return {
+        "timestamp_us": float(timestamp_us),
+        "x": x,
+        "y": y,
+        "yaw": yaw,
+        "vx": speed * math.cos(yaw),
+        "vy": speed * math.sin(yaw),
+        "acceleration_x": acceleration * math.cos(yaw),
+        "acceleration_y": acceleration * math.sin(yaw),
+        "angular_rate_z": yaw_rate,
+    }
+
+
+def _frame_pair_speed(prev: Dict[str, Any], curr: Dict[str, Any]) -> float:
+    dt = max((int(curr["timestamp_us"]) - int(prev["timestamp_us"])) / 1_000_000.0, 1e-6)
+    prev_ego = prev["ego"]
+    curr_ego = curr["ego"]
+    return math.hypot(float(curr_ego["x"]) - float(prev_ego["x"]), float(curr_ego["y"]) - float(prev_ego["y"])) / dt
+
+
+def _longitudinal_acceleration(ego: Dict[str, Any]) -> float:
+    yaw = float(ego.get("yaw", 0.0))
+    ax = float(ego.get("acceleration_x", 0.0))
+    ay = float(ego.get("acceleration_y", 0.0))
+    return ax * math.cos(yaw) + ay * math.sin(yaw)
+
+
+def _clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, float(value)))
+
+
+def _normalize_angle(value: float) -> float:
+    return math.atan2(math.sin(value), math.cos(value))
 
 
 def _markdown_to_basic_html(markdown: str) -> str:

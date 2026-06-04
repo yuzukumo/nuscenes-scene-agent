@@ -38,6 +38,11 @@ from nusc_scene_agent.data_utils import DEFAULT_DATAROOT, PREPARE_PROFILES, disc
 from nusc_scene_agent.dataset_backends import inspect_dataset_backends, write_dataset_backend_inventory
 from nusc_scene_agent.experiment_config import run_experiment_config
 from nusc_scene_agent.failure_mining import mine_model_failures
+from nusc_scene_agent.failure_aware_reranking import (
+    DEFAULT_FAILURE_AWARE_RERANKING_OUTPUT,
+    DEFAULT_FAILURE_UPDATE_QUERIES,
+    run_failure_aware_reranking_eval,
+)
 from nusc_scene_agent.gallery import build_benchmark_gallery, build_comparison_browser
 from nusc_scene_agent.indexing import build_index
 from nusc_scene_agent.langgraph_agent import run_langgraph_query_pipeline
@@ -52,6 +57,12 @@ from nusc_scene_agent.learned_retrieval import (
 )
 from nusc_scene_agent.llm_client import DEFAULT_TIMEOUT_S, LLMConfig
 from nusc_scene_agent.multimodal_retrieval import run_multimodal_retrieval_report
+from nusc_scene_agent.nuplan_closed_loop import (
+    DEFAULT_NUPLAN_CLOSED_LOOP_OUTPUT,
+    DEFAULT_NUPLAN_CLOSED_LOOP_PROFILES,
+    run_nuplan_closed_loop_study,
+)
+from nusc_scene_agent.nuplan_closed_loop_sweep import DEFAULT_NUPLAN_CLOSED_LOOP_SWEEP_OUTPUT
 from nusc_scene_agent.nuplan_replay import (
     DEFAULT_NUPLAN_REPLAY_BENCHMARK,
     DEFAULT_NUPLAN_SPLIT,
@@ -107,8 +118,8 @@ from nusc_scene_agent.validation import ValidationConfig
 from nusc_scene_agent.world_model_case_studies import render_world_model_case_studies
 
 
-DEFAULT_DB = Path("artifacts/index/v1.0-mini.sqlite")
-DEFAULT_BENCHMARK = Path("benchmarks/mvp_queries.yaml")
+DEFAULT_DB = Path("artifacts/index/v1.0-trainval.sqlite")
+DEFAULT_BENCHMARK = Path("benchmarks/smoke_queries.yaml")
 DEFAULT_TRAINVAL_BENCHMARK = Path("benchmarks/trainval_suite_v1.yaml")
 DEFAULT_COMPARE_BENCHMARK = Path("benchmarks/trainval_language_stress_v1.yaml")
 DEFAULT_SCENARIO_MINING_BENCHMARK = Path("benchmarks/trainval_scenario_mining_v1.yaml")
@@ -166,10 +177,10 @@ def _build_parser() -> argparse.ArgumentParser:
     prepare_parser.add_argument("--archive", action="append", default=[], help="Archive path, repeatable.")
     prepare_parser.add_argument("--workspace", default=".", help="Workspace root that contains the archives.")
     prepare_parser.add_argument("--dataroot", default=str(DEFAULT_DATAROOT), help="Extraction target.")
-    prepare_parser.add_argument("--profile", choices=PREPARE_PROFILES, default="mini")
+    prepare_parser.add_argument("--profile", choices=PREPARE_PROFILES, default="trainval-full")
 
     build_parser = subparsers.add_parser("build-index", help="Build a SQLite index from nuScenes annotations.")
-    build_parser.add_argument("--version", default="v1.0-mini")
+    build_parser.add_argument("--version", default="v1.0-trainval")
     build_parser.add_argument("--dataroot", default=str(DEFAULT_DATAROOT))
     build_parser.add_argument("--db", default=str(DEFAULT_DB))
     build_parser.add_argument("--scene-limit", type=int, default=0)
@@ -238,9 +249,21 @@ def _build_parser() -> argparse.ArgumentParser:
     learned_retrieval_parser.add_argument("text", help="Natural-language risk description.")
     learned_retrieval_parser.add_argument("--db", default="artifacts/index/v1.0-trainval.sqlite")
     learned_retrieval_parser.add_argument("--checkpoint", default=str(DEFAULT_LEARNED_RETRIEVER_CHECKPOINT))
-    learned_retrieval_parser.add_argument("--output", default="outputs/learned_retrieval_demo_v1")
+    learned_retrieval_parser.add_argument("--output", default="outputs/learned_retrieval_v1")
     learned_retrieval_parser.add_argument("--top-k", type=int, default=20)
     learned_retrieval_parser.add_argument("--candidate-pool", type=int, default=64)
+
+    failure_aware_reranking_parser = subparsers.add_parser(
+        "run-failure-aware-reranking",
+        help="Evaluate learned reranking on failure-mined scene queries.",
+    )
+    failure_aware_reranking_parser.add_argument("--query-config", default=str(DEFAULT_FAILURE_UPDATE_QUERIES))
+    failure_aware_reranking_parser.add_argument("--db", default="artifacts/index/v1.0-trainval.sqlite")
+    failure_aware_reranking_parser.add_argument("--checkpoint", default=str(DEFAULT_LEARNED_RETRIEVER_CHECKPOINT))
+    failure_aware_reranking_parser.add_argument("--output", default=str(DEFAULT_FAILURE_AWARE_RERANKING_OUTPUT))
+    failure_aware_reranking_parser.add_argument("--candidate-pool", type=int, default=48)
+    failure_aware_reranking_parser.add_argument("--top-k", type=int, default=3)
+    failure_aware_reranking_parser.add_argument("--max-queries", type=int, default=24)
 
     langgraph_query_parser = subparsers.add_parser(
         "langgraph-query",
@@ -296,7 +319,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     generate_counterfactual_parser.add_argument(
         "--case-library",
-        default="outputs/trainval_suite_llm_hybrid_en_v1/case_library.json",
+        default="outputs/trainval_case_library_v1/case_library.json",
         help="Path to case_library.json used as benchmark anchors.",
     )
     generate_counterfactual_parser.add_argument(
@@ -312,7 +335,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     generate_scenario_parser.add_argument(
         "--case-library",
-        default="outputs/trainval_suite_llm_hybrid_en_v1/case_library.json",
+        default="outputs/trainval_case_library_v1/case_library.json",
         help="Path to case_library.json used as scenario anchors.",
     )
     generate_scenario_parser.add_argument(
@@ -559,7 +582,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Generate a nuPlan replay benchmark, proxy rollouts, and evaluation summaries.",
     )
     run_nuplan_replay_parser.add_argument("--split-dir", default=str(DEFAULT_NUPLAN_SPLIT))
-    run_nuplan_replay_parser.add_argument("--output", default="outputs/nuplan_mini_replay_study_v2")
+    run_nuplan_replay_parser.add_argument("--output", default="outputs/nuplan_replay_study_v1")
     run_nuplan_replay_parser.add_argument("--max-dbs", type=int, default=4)
     run_nuplan_replay_parser.add_argument("--max-cases", type=int, default=16)
     run_nuplan_replay_parser.add_argument("--max-cases-per-db", type=int, default=4)
@@ -581,6 +604,34 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Run a cross-split nuPlan replay-regression sweep.",
     )
     run_nuplan_sweep_parser.add_argument("--config", default="configs/nuplan_replay_sweep_medium.yaml")
+
+    run_nuplan_closed_loop_sweep_parser = subparsers.add_parser(
+        "run-nuplan-closed-loop-sweep",
+        help="Run a cross-split nuPlan closed-loop replay sweep.",
+    )
+    run_nuplan_closed_loop_sweep_parser.add_argument("--config", default="configs/nuplan_closed_loop_sweep_medium.yaml")
+
+    run_nuplan_closed_loop_parser = subparsers.add_parser(
+        "run-nuplan-closed-loop-study",
+        help="Run closed-loop replay simulation on compact nuPlan cases.",
+    )
+    run_nuplan_closed_loop_parser.add_argument("--split-dir", default=str(DEFAULT_NUPLAN_SPLIT))
+    run_nuplan_closed_loop_parser.add_argument("--output", default=str(DEFAULT_NUPLAN_CLOSED_LOOP_OUTPUT))
+    run_nuplan_closed_loop_parser.add_argument("--max-dbs", type=int, default=64)
+    run_nuplan_closed_loop_parser.add_argument("--max-cases", type=int, default=16)
+    run_nuplan_closed_loop_parser.add_argument("--max-cases-per-db", type=int, default=4)
+    run_nuplan_closed_loop_parser.add_argument("--history-s", type=float, default=2.0)
+    run_nuplan_closed_loop_parser.add_argument("--future-s", type=float, default=4.0)
+    run_nuplan_closed_loop_parser.add_argument("--frame-hz", type=float, default=2.0)
+    run_nuplan_closed_loop_parser.add_argument("--min-anchor-gap-s", type=float, default=4.0)
+    run_nuplan_closed_loop_parser.add_argument("--scenario-tag", action="append", default=[])
+    run_nuplan_closed_loop_parser.add_argument(
+        "--profile",
+        action="append",
+        default=[],
+        choices=DEFAULT_NUPLAN_CLOSED_LOOP_PROFILES,
+        help="Closed-loop planner profile. Repeatable. Defaults to all profiles.",
+    )
 
     compare_nuplan_replay_parser = subparsers.add_parser(
         "compare-nuplan-replay-evaluations",
@@ -624,6 +675,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Export the benchmark-layer registry.",
     )
     registry_parser.add_argument("--output", default="outputs/benchmark_registry.json")
+
+    full_suite_parser = subparsers.add_parser(
+        "run-full-benchmark-suite",
+        help="Run the end-to-end benchmark suite config.",
+    )
+    full_suite_parser.add_argument("--config", default="configs/full_benchmark_suite.yaml")
 
     unified_cases_parser = subparsers.add_parser(
         "export-unified-cases",
@@ -739,7 +796,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     enrich_case_library_parser.add_argument(
         "--case-library",
-        default="outputs/trainval_suite_llm_hybrid_en_v1/case_library.json",
+        default="outputs/trainval_case_library_v1/case_library.json",
         help="Input case library JSON path.",
     )
     enrich_case_library_parser.add_argument(
@@ -749,7 +806,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     enrich_case_library_parser.add_argument(
         "--output",
-        default="outputs/trainval_suite_llm_hybrid_en_v1/case_library_enriched.json",
+        default="outputs/trainval_case_library_v1/case_library_enriched.json",
         help="Output JSON path for the enriched case library.",
     )
 
@@ -793,14 +850,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     gallery_parser.add_argument("--title", default="")
 
-    demo_parser = subparsers.add_parser("demo", help="Run the minimal v1.0-mini example workflow.")
-    demo_parser.add_argument("--workspace", default=".")
-    demo_parser.add_argument("--dataroot", default=str(DEFAULT_DATAROOT))
-    demo_parser.add_argument("--db", default=str(DEFAULT_DB))
-    demo_parser.add_argument("--config", default=str(DEFAULT_BENCHMARK))
-    demo_parser.add_argument("--output", default="outputs/demo")
-    demo_parser.add_argument("--candidate-pool", type=int, default=12)
-    _add_llm_args(demo_parser)
     return parser
 
 
@@ -986,6 +1035,20 @@ def main() -> None:
         )
         print("Learned retrieval report:", Path(result["markdown"]).resolve())
         print("Candidates:", result["candidate_count"])
+        return
+
+    if args.command == "run-failure-aware-reranking":
+        result = run_failure_aware_reranking_eval(
+            query_config=Path(args.query_config),
+            db_path=Path(args.db),
+            output_dir=Path(args.output),
+            learned_checkpoint=Path(args.checkpoint),
+            candidate_pool=args.candidate_pool,
+            top_k=args.top_k,
+            max_queries=args.max_queries,
+        )
+        print("Failure-aware reranking:", Path(args.output).resolve())
+        print(json.dumps(result["overview"], indent=2, ensure_ascii=False))
         return
 
     if args.command == "langgraph-query":
@@ -1380,6 +1443,33 @@ def main() -> None:
         print(json.dumps(result["result"].get("overview", {}), indent=2, ensure_ascii=False))
         return
 
+    if args.command == "run-nuplan-closed-loop-sweep":
+        result = run_experiment_config(Path(args.config))
+        print(
+            "nuPlan closed-loop sweep:",
+            Path(result["result"].get("output_dir", DEFAULT_NUPLAN_CLOSED_LOOP_SWEEP_OUTPUT)).resolve(),
+        )
+        print(json.dumps(result["result"].get("overview", {}), indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "run-nuplan-closed-loop-study":
+        manifest = run_nuplan_closed_loop_study(
+            split_dir=Path(args.split_dir),
+            output_dir=Path(args.output),
+            max_dbs=args.max_dbs,
+            max_cases=args.max_cases,
+            max_cases_per_db=args.max_cases_per_db,
+            history_s=args.history_s,
+            future_s=args.future_s,
+            frame_hz=args.frame_hz,
+            min_anchor_gap_s=args.min_anchor_gap_s,
+            scenario_tags=args.scenario_tag or None,
+            profiles=args.profile or None,
+        )
+        print("nuPlan closed-loop study:", Path(args.output).resolve())
+        print(json.dumps(manifest["comparison"]["overview"], indent=2, ensure_ascii=False))
+        return
+
     if args.command == "compare-nuplan-replay-evaluations":
         comparison = compare_nuplan_replay_evaluations(
             evaluation_dirs=[Path(path) for path in args.eval_dir],
@@ -1433,6 +1523,12 @@ def main() -> None:
         result = run_experiment_config(Path(args.config))
         print("Experiment result:", result["experiment_id"])
         print(json.dumps(result["result"], indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "run-full-benchmark-suite":
+        result = run_experiment_config(Path(args.config))
+        print("Full benchmark suite:", Path(result["result"].get("output_dir", "outputs/full_benchmark_suite_v1")).resolve())
+        print(json.dumps({"stages": list(result["result"].get("stages", {}).keys())}, indent=2))
         return
 
     if args.command == "generate-bev-occupancy-benchmark":
@@ -1595,36 +1691,6 @@ def main() -> None:
                 title=args.title or "nuScenes Benchmark Comparison Browser",
             )
         print(json.dumps(metadata, indent=2, ensure_ascii=False))
-        return
-
-    if args.command == "demo":
-        workspace = Path(args.workspace).resolve()
-        dataroot = Path(args.dataroot).resolve()
-        db_path = Path(args.db).resolve()
-        output_dir = Path(args.output).resolve()
-        output_dir.mkdir(parents=True, exist_ok=True)
-        llm_config = _resolve_llm_config(args)
-
-        if not (dataroot / "v1.0-mini").exists():
-            extracted = prepare_data(workspace=workspace, dataroot=dataroot, archives=None)
-            print("Prepared data from", len(extracted), "archives")
-
-        if not db_path.exists():
-            stats = build_index(version="v1.0-mini", dataroot=dataroot, db_path=db_path, verbose=True)
-            print("Built index:", stats)
-
-        summaries = _run_benchmark(
-            config_path=Path(args.config),
-            db_path=db_path,
-            output_dir=output_dir,
-            candidate_pool=args.candidate_pool,
-            query_mode=args.query_mode,
-            rerank_mode=args.rerank_mode,
-            llm_config=llm_config,
-            learned_reranker_checkpoint=_optional_path(args.learned_reranker_checkpoint),
-        )
-        print("Mini example complete:", output_dir)
-        print(json.dumps(summaries, indent=2, ensure_ascii=False))
         return
 
 

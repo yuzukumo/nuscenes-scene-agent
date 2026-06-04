@@ -1,11 +1,11 @@
 experiment:
-  id: nuplan_replay_sweep_medium
-  type: nuplan_replay_sweep
-  output: outputs/nuplan_replay_sweep_v1
-  result_path: outputs/nuplan_replay_sweep_v1/experiment_result.json
+  id: nuplan_closed_loop_sweep_medium
+  type: nuplan_closed_loop_sweep
+  output: outputs/nuplan_closed_loop_sweep_v1
+  result_path: outputs/nuplan_closed_loop_sweep_v1/experiment_result.json
 
-nuplan_replay_sweep:
-  output: outputs/nuplan_replay_sweep_v1
+nuplan_closed_loop_sweep:
+  output: outputs/nuplan_closed_loop_sweep_v1
   defaults:
     max_dbs: 128
     max_cases: 24
@@ -15,10 +15,9 @@ nuplan_replay_sweep:
     frame_hz: 2.0
     min_anchor_gap_s: 4.0
     profiles:
-      - logged_ego
+      - logged_ego_oracle
       - history_kinematic
-      - constant_velocity
-      - stopped
+      - idm_like_following
   studies:
     - name: mini
       split_dir: data/nuplan/dataset/nuplan-v1.1/splits/mini

@@ -2,7 +2,7 @@
 
 # nuScenes Scene Mining Agent
 
-Natural-language risky-scene retrieval, validation, and benchmark generation on `nuScenes`, with optional `nuPlan` replay-regression support.
+Natural-language risky-scene mining, validation, benchmark generation, and replay-based simulation evaluation on `nuScenes` and `nuPlan`.
 
 `Python 3.10+` `Conda` `nuScenes` `nuPlan` `Ollama` `Scene Mining` `Benchmarking`
 
@@ -12,24 +12,24 @@ Natural-language risky-scene retrieval, validation, and benchmark generation on 
   <img src="./assets/pipeline_overview.png" alt="Pipeline overview" width="100%">
 </p>
 
-`nuScenes Scene Mining Agent` mines risky driving scenes from `nuScenes`, validates them with geometric and map-based evidence, and converts the results into benchmark artifacts for scenario retrieval, perception, BEV occupancy, world-model evaluation, and replay regression.
-
-The project focuses on dataset indexing, scene mining, validation, and benchmark construction. Learned modules are used as compact retrieval or forecasting components and are evaluated against explicit benchmark slices.
+`nuScenes Scene Mining Agent` builds a structured workflow from open-ended risk descriptions to validated driving cases and benchmark artifacts. The pipeline indexes datasets, plans structured scene queries with a local Ollama model, retrieves candidate scenes, validates them with geometry and map context, and exports benchmark layers for retrieval, perception, BEV occupancy, world-model evaluation, replay regression, and closed-loop replay.
 
 ## Results
 
-The default trainval suite exports `24` scenario anchors, `48` paired scenario-mining queries, and `24` aligned perception, BEV occupancy, and world-model cases. Counts are sampling caps over validated mined cases, not dataset limits.
+The trainval suite exports `24` scenario anchors, `48` paired scenario-mining queries, and aligned perception, BEV occupancy, and world-model slices. The exported counts are sampling caps over validated mined cases.
 
 | Layer | Snapshot |
 | --- | --- |
 | Scenario mining | `24` anchors and `48` reference-aware queries |
-| Learned reranking | PyTorch query-scene scorer trained on `4,000` weakly labeled trainval groups; held-out Recall@1 `1.000` |
-| Perception slices | `24` mined risk slices; proxy profiles separate delayed initialization and sparse crossing tracks |
-| BEV occupancy slices | `24` sparse occupancy slices; `oracle_occupancy` IoU `1.000`, `context_drop_occupancy` `0.553`, `risk_actor_only` `0.105` |
-| World-model benchmark | `24` scenario-conditioned slices with challenge tracks; `kinematic_rollout` risk fidelity `0.869` |
-| `ContextVAE` baseline | forecast-compatible subset: `7` slices; `ADE 0.280`, `MinADE@5 0.207`, risk fidelity `0.841` |
-| `nuPlan` replay regression | `576` SQLite logs scanned, `1556` candidate anchors collected, `112` balanced replay cases exported |
-| Failure mining | `305` failure records, `56` clusters, and `24` benchmark update queries |
+| Learned reranking | `4,000` weakly labeled trainval groups; scene-held-out Recall@1 `1.000` |
+| Perception slices | `24` mined risk slices with event-window actor supervision |
+| BEV occupancy slices | `oracle_occupancy` IoU `1.000`; `context_drop_occupancy` IoU `0.553`; `risk_actor_only` IoU `0.105` |
+| World-model benchmark | `24` scenario-conditioned slices; `kinematic_rollout` risk fidelity `0.869` |
+| `ContextVAE` baseline | `7` forecast-compatible slices; `ADE 0.280`; `MinADE@5 0.207`; risk fidelity `0.841` |
+| `nuPlan` replay regression | `576` SQLite logs scanned; `1556` candidates; `112` replay cases; `history_kinematic` ADE `0.916` |
+| `nuPlan` closed-loop replay | `112` replay-simulation cases; `history_kinematic` ADE `1.027`; closed-loop score `0.950` |
+| Failure mining | `401` failure records, `83` clusters, and `24` benchmark update queries |
+| Failure-aware ML retrieval | Pass@K improves from `20/24` to `24/24` with validation-gated candidate generation |
 
 <p align="center">
   <img src="./assets/readme_overview.png" alt="Representative scene-mining outputs" width="100%">
@@ -43,20 +43,22 @@ The default trainval suite exports `24` scenario anchors, `48` paired scenario-m
   <img src="./assets/nuplan_replay_case_studies.png" alt="nuPlan replay-regression case studies" width="100%">
 </p>
 
+<p align="center">
+  <img src="./assets/nuplan_closed_loop_case_studies.png" alt="nuPlan closed-loop replay case studies" width="100%">
+</p>
+
 Detailed benchmark tables are in [docs/benchmark_snapshot.md](docs/benchmark_snapshot.md).
 
 ## Capabilities
 
-- Natural-language scene retrieval with `rule`, `llm`, and `hybrid` query modes.
-- Deterministic validation using actor grounding, event localization, TTC, lane relation, and crosswalk context.
+- Local-Ollama natural-language query planning with deterministic retrieval and validation.
+- Actor grounding, event localization, TTC, lane relation, crosswalk context, and BEV evidence rendering.
 - Reference-aware scenario-mining benchmarks with scene, actor, and event-window supervision.
-- Scenario-conditioned perception and sparse BEV occupancy slices for external tracking or detection outputs.
-- Scenario-conditioned world-model slices for future rollouts and multi-modal forecasts.
-- Structural multimodal reranking over language intent, BEV geometry, motion, and sensor visibility.
-- Learned query-scene reranking from weakly supervised trainval scenario families.
-- Model-in-the-loop failure mining from perception, occupancy, world-model, and replay-regression metrics.
-- Optional `nuPlan` replay-regression benchmark generation from SQLite scenario tags.
-- LangGraph research agent that reviews local artifacts through an Ollama model.
+- Scenario-conditioned perception, sparse BEV occupancy, and world-model benchmark slices.
+- Weakly supervised query-scene reranking and failure-aware candidate generation.
+- Model-in-the-loop failure mining across perception, occupancy, world-model, replay-regression, and closed-loop metrics.
+- `nuPlan` replay-regression and closed-loop replay evaluation from SQLite scenario tags.
+- Result registry, artifact manifests, and dataset-backend inspection.
 
 ## Quickstart
 
@@ -67,31 +69,32 @@ conda activate nuscenes
 
 Dataset links and archive layout are listed in [docs/dataset_downloads.md](docs/dataset_downloads.md).
 
-Prepare `v1.0-mini`, build an index, and run one query:
+Prepare data and build the `nuScenes` trainval index:
 
 ```bash
-python -m nusc_scene_agent prepare-data --workspace . --profile mini
+python -m nusc_scene_agent inspect-archives --workspace .
+python -m nusc_scene_agent prepare-data --workspace . --profile trainval-full
 
 python -m nusc_scene_agent build-index \
-  --version v1.0-mini \
+  --version v1.0-trainval \
   --dataroot data/sets/nuscenes \
-  --db artifacts/index/v1.0-mini.sqlite
-
-python -m nusc_scene_agent query \
-  "pedestrian crossing at close range ahead of ego lane" \
-  --db artifacts/index/v1.0-mini.sqlite \
-  --output outputs/mini_query \
-  --query-mode rule
+  --db artifacts/index/v1.0-trainval.sqlite
 ```
 
-Generate the default trainval benchmark suite:
+Start the local model endpoint. Run `ollama serve` in a separate shell if the service is not already active:
 
 ```bash
-python -m nusc_scene_agent run-experiment-config \
-  --config configs/risk_benchmark_suite.yaml
+ollama pull gemma4:latest
+ollama serve
 ```
 
-Additional workflows for Ollama, learned reranking, `ContextVAE`, `nuPlan`, failure mining, and registry export are in [docs/usage.md](docs/usage.md).
+Run the end-to-end benchmark suite:
+
+```bash
+python -m nusc_scene_agent run-full-benchmark-suite
+```
+
+The suite is configured in [configs/full_benchmark_suite.yaml](configs/full_benchmark_suite.yaml). Stage-level commands are documented in [docs/usage.md](docs/usage.md).
 
 ## Data Policy
 

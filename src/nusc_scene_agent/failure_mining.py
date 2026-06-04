@@ -15,6 +15,7 @@ DEFAULT_FAILURE_SOURCES = [
     Path("outputs/contextvae_world_model_study_v1"),
     Path("outputs/nuscenes_forecast_baselines_eval"),
     Path("outputs/nuplan_replay_sweep_v1/nuplan_replay_sweep_failure_taxonomy.csv"),
+    Path("outputs/nuplan_closed_loop_sweep_v1"),
 ]
 
 
@@ -346,6 +347,10 @@ def _natural_language_from_failure(
         return "close front actor with risk-distance and time-to-collision error"
     if failure_tag in {"miss_rate", "trajectory_error", "risk_underreach"}:
         return "{0} ahead with inaccurate future trajectory near ego".format(actor)
+    if failure_tag == "closed_loop_drift":
+        return "{0} ahead while ego closed-loop rollout drifts from logged behavior".format(actor)
+    if failure_tag == "comfort_violation":
+        return "{0} ahead with closed-loop comfort violation".format(actor)
     return "{0} ahead in a mined model failure case".format(actor)
 
 
@@ -378,7 +383,7 @@ def _actors_from_context(actor_or_scenario: str) -> List[str]:
 
 
 def _cluster_context(record: FailureRecord) -> tuple[str, str]:
-    if record.source_type.startswith("nuplan_replay"):
+    if record.source_type.startswith("nuplan_replay") or record.source_type.startswith("nuplan_closed_loop"):
         return (
             record.scenario_family or record.primary_behavior or "unspecified",
             record.scenario_tag or record.category_group or "unspecified",
@@ -392,8 +397,10 @@ def _cluster_context(record: FailureRecord) -> tuple[str, str]:
 def _metric_row_severity(row: Mapping[str, Any], failure_tag: str) -> float:
     severity = 1.0
     severity += max(0.0, 1.0 - _safe_float(row.get("risk_fidelity_score"), default=1.0)) * 3.0
+    severity += max(0.0, 1.0 - _safe_float(row.get("closed_loop_score"), default=1.0)) * 3.0
     severity += max(0.0, 1.0 - _safe_float(row.get("mean_occupancy_iou") or row.get("occupancy_iou"), default=1.0)) * 1.5
     severity += min(2.0, _safe_float(row.get("ade_m"), default=0.0) / 2.0)
+    severity += min(2.0, _safe_float(row.get("ego_ade_m"), default=0.0) / 4.0)
     severity += 1.0 if failure_tag in {"missed_primary_actor", "collision_proxy_mismatch", "ttc_error"} else 0.0
     return severity
 
@@ -401,6 +408,7 @@ def _metric_row_severity(row: Mapping[str, Any], failure_tag: str) -> float:
 def _compact_evidence(row: Mapping[str, Any]) -> Dict[str, Any]:
     keys = [
         "risk_fidelity_score",
+        "closed_loop_score",
         "mean_occupancy_iou",
         "occupancy_iou",
         "mean_primary_actor_recall",
@@ -418,6 +426,9 @@ def _compact_evidence(row: Mapping[str, Any]) -> Dict[str, Any]:
         "min_ttc_error_s",
         "ego_ade_m",
         "ego_fde_m",
+        "closed_loop_progress_m",
+        "logged_progress_m",
+        "progress_ratio",
         "distance_band",
         "ttc_band",
         "map_relation",
@@ -429,6 +440,8 @@ def _infer_source_type(path: Path, payload: Mapping[str, Any]) -> str:
     schema = str(payload.get("schema") or "")
     name = path.name
     text = "{0} {1} {2}".format(path, schema, name).lower()
+    if "closed_loop" in text or schema == "nuplan_closed_loop_metrics_v1":
+        return "nuplan_closed_loop"
     if "nuplan_replay" in text or "scenario_family_breakdown" in payload:
         return "nuplan_replay"
     if "bev_occupancy" in text:
@@ -441,9 +454,12 @@ def _infer_source_type(path: Path, payload: Mapping[str, Any]) -> str:
 
 
 def _profile_name_from_metric_path(path: Path, payload: Mapping[str, Any]) -> str:
-    profile = str(payload.get("profile_name") or path.parent.name)
+    overview = dict(payload.get("overview") or {})
+    profile = str(payload.get("profile_name") or overview.get("profile_name") or path.parent.name)
     if profile.endswith("_evaluation"):
         return profile[: -len("_evaluation")]
+    if profile.endswith("_closed_loop"):
+        return profile[: -len("_closed_loop")]
     return profile
 
 

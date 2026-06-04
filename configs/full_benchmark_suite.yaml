@@ -1,0 +1,114 @@
+experiment:
+  id: full_benchmark_suite
+  type: full_benchmark_suite
+  output: outputs/full_benchmark_suite_v1
+  result_path: outputs/full_benchmark_suite_v1/experiment_result.json
+
+full_benchmark_suite:
+  output: outputs/full_benchmark_suite_v1
+  stages:
+    case_library_generation: true
+    risk_benchmark_suite: true
+    nuplan_replay_sweep: true
+    nuplan_closed_loop_sweep: true
+    failure_mining: true
+    result_registry: true
+
+case_library_generation:
+  benchmark: benchmarks/trainval_suite_v1.yaml
+  db: artifacts/index/v1.0-trainval.sqlite
+  output: outputs/trainval_case_library_v1
+  candidate_pool: 12
+  query_mode: hybrid
+  rerank_mode: llm
+  enrich: true
+  llm:
+    base_url: http://127.0.0.1:11434
+    model: gemma4:latest
+
+risk_benchmark_suite:
+  db: artifacts/index/v1.0-trainval.sqlite
+  output: outputs/risk_benchmark_suite_v1
+  result_path: outputs/risk_benchmark_suite_v1/experiment_result.json
+  max_cases: 24
+  scenario_output: benchmarks/trainval_scenario_mining_v1.yaml
+  perception_output: benchmarks/trainval_perception_slices_v1.json
+  world_model_output: benchmarks/trainval_world_model_slices_v1.json
+  bev_occupancy_output: benchmarks/trainval_bev_occupancy_slices_v1.json
+  run_proxy_studies: true
+  proxy_outputs:
+    perception: outputs/trainval_perception_proxy_study_v1
+    world_model: outputs/trainval_world_model_proxy_study_v1
+    bev_occupancy: outputs/trainval_bev_occupancy_proxy_study_v1
+  grid_spec:
+    x_min_m: -40.0
+    x_max_m: 80.0
+    y_min_m: -40.0
+    y_max_m: 40.0
+    resolution_m: 1.0
+    dilation_radius_cells: 1.0
+
+nuplan_replay_sweep:
+  output: outputs/nuplan_replay_sweep_v1
+  defaults:
+    max_dbs: 128
+    max_cases: 24
+    max_cases_per_db: 4
+    history_s: 2.0
+    future_s: 4.0
+    frame_hz: 2.0
+    min_anchor_gap_s: 4.0
+    profiles:
+      - logged_ego
+      - history_kinematic
+      - constant_velocity
+      - stopped
+  studies:
+    - name: mini
+      split_dir: data/nuplan/dataset/nuplan-v1.1/splits/mini
+      max_dbs: 64
+      max_cases: 16
+    - name: val_sample
+      split_dir: data/nuplan/dataset/nuplan-v1.1/splits/val
+    - name: train_boston_sample
+      split_dir: data/nuplan/dataset/nuplan-v1.1/splits/train_boston
+    - name: train_pittsburgh_sample
+      split_dir: data/nuplan/dataset/nuplan-v1.1/splits/train_pittsburgh
+    - name: train_singapore_sample
+      split_dir: data/nuplan/dataset/nuplan-v1.1/splits/train_singapore
+
+nuplan_closed_loop_sweep:
+  output: outputs/nuplan_closed_loop_sweep_v1
+  defaults:
+    max_dbs: 128
+    max_cases: 24
+    max_cases_per_db: 4
+    history_s: 2.0
+    future_s: 4.0
+    frame_hz: 2.0
+    min_anchor_gap_s: 4.0
+    profiles:
+      - logged_ego_oracle
+      - history_kinematic
+      - idm_like_following
+  studies:
+    - name: mini
+      split_dir: data/nuplan/dataset/nuplan-v1.1/splits/mini
+      max_dbs: 64
+      max_cases: 16
+    - name: val_sample
+      split_dir: data/nuplan/dataset/nuplan-v1.1/splits/val
+    - name: train_boston_sample
+      split_dir: data/nuplan/dataset/nuplan-v1.1/splits/train_boston
+    - name: train_pittsburgh_sample
+      split_dir: data/nuplan/dataset/nuplan-v1.1/splits/train_pittsburgh
+    - name: train_singapore_sample
+      split_dir: data/nuplan/dataset/nuplan-v1.1/splits/train_singapore
+
+failure_mining:
+  output: outputs/model_in_the_loop_failure_mining_v1
+  max_queries: 24
+  min_count: 1
+
+result_registry:
+  output: outputs/full_benchmark_suite_v1/result_registry
