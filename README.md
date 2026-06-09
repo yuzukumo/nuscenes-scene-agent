@@ -11,9 +11,8 @@ Scenario-centric risk mining, benchmark generation, replay evaluation, and visio
 </div>
 
 <p align="center">
-  <video src="./assets/carla_trajectory_transformer_demo.mp4" controls muted playsinline width="100%"></video>
+  <video src="https://github.com/user-attachments/assets/73f1467c-1bce-4f4a-b5b6-22fafa78e848" controls muted playsinline width="100%"></video>
   <br>
-  <sub>CARLA closed-loop demo, 1080p MP4.</sub>
 </p>
 
 `Autonomous Driving Risk Scenario Benchmark Agent` is organized around a shared risk-scenario taxonomy. `nuScenes` mines and validates real-world scenario anchors, `nuPlan` evaluates logged replay and replay-based closed-loop behavior, `Bench2Drive` trains and diagnoses a vision E2E trajectory planner, and `CARLA` provides audit-gated closed-loop visual evidence under semantically matched scenarios. Each backend has a distinct role and is linked by the same scenario definitions.
