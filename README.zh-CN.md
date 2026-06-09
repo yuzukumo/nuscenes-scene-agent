@@ -11,9 +11,7 @@
 </div>
 
 <p align="center">
-  <a href="./assets/carla_trajectory_transformer_demo.mp4">
-    <img src="./assets/carla_trajectory_transformer_demo.jpg" alt="CARLA closed-loop demo" width="100%">
-  </a>
+  <video src="./assets/carla_trajectory_transformer_demo.mp4" controls muted playsinline width="100%"></video>
   <br>
   <sub>CARLA 闭环 demo，1080p MP4。</sub>
 </p>
