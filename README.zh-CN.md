@@ -11,9 +11,8 @@
 </div>
 
 <p align="center">
-  <video src="./assets/carla_trajectory_transformer_demo.mp4" controls muted playsinline width="100%"></video>
+  <video src="https://github.com/user-attachments/assets/73f1467c-1bce-4f4a-b5b6-22fafa78e848" controls muted playsinline width="100%"></video>
   <br>
-  <sub>CARLA 闭环 demo，1080p MP4。</sub>
 </p>
 
 `Autonomous Driving Risk Scenario Benchmark Agent` 以统一的风险场景分类体系为核心。`nuScenes` 用于真实道路日志中的场景挖掘与验证，`nuPlan` 用于日志回放和回放式闭环评估，`Bench2Drive` 用于训练和诊断多相机视觉 E2E 轨迹规划器，`CARLA` 用于生成经过语义审查的闭环可视化证据。各数据源和仿真后端通过同一组场景定义连接。
