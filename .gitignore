@@ -38,3 +38,5 @@ v1.0-trainval/
 *.tar
 *.zip
 *.7z
+*.mp4
+!assets/*.mp4

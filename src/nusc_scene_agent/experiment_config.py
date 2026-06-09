@@ -15,6 +15,9 @@ from nusc_scene_agent.bev_occupancy_benchmark import (
 )
 from nusc_scene_agent.benchmark_registry import build_default_benchmark_registry, write_benchmark_registry
 from nusc_scene_agent.benchmark_schema import load_benchmark_config
+from nusc_scene_agent.bench2drive_closed_loop import ClosedLoopControlConfig, run_bench2drive_vision_closed_loop
+from nusc_scene_agent.carla_semantic_demo_mining import mine_carla_semantic_demos
+from nusc_scene_agent.carla_vision_closed_loop import run_carla_vision_closed_loop
 from nusc_scene_agent.case_library import build_case_library, write_case_library
 from nusc_scene_agent.case_library_enrichment import enrich_case_library
 from nusc_scene_agent.dataset_backends import inspect_dataset_backends, write_dataset_backend_inventory
@@ -60,6 +63,12 @@ def run_experiment_config(config_path: Path) -> Dict[str, Any]:
         result = _run_nuplan_replay_sweep_experiment(config)
     elif experiment_type == "nuplan_closed_loop_sweep":
         result = _run_nuplan_closed_loop_sweep_experiment(config)
+    elif experiment_type == "carla_vision_closed_loop":
+        result = _run_carla_vision_closed_loop_experiment(config)
+    elif experiment_type == "carla_semantic_demo_mining":
+        result = _run_carla_semantic_demo_mining_experiment(config)
+    elif experiment_type == "bench2drive_vision_closed_loop":
+        result = _run_bench2drive_vision_closed_loop_experiment(config)
     elif experiment_type == "full_benchmark_suite":
         result = _run_full_benchmark_suite_experiment(config, config_path)
     elif experiment_type == "case_library_generation":
@@ -179,6 +188,203 @@ def _run_nuplan_closed_loop_experiment(config: Mapping[str, Any]) -> Dict[str, A
         "case_studies": manifest.get("case_studies", {}),
         "artifact_manifest": manifest.get("artifact_manifest", {}),
     }
+
+
+def _run_bench2drive_vision_closed_loop_experiment(config: Mapping[str, Any]) -> Dict[str, Any]:
+    closed_loop = dict(config.get("bench2drive_vision_closed_loop") or {})
+    output_dir = Path(str(closed_loop.get("output") or "outputs/bench2drive_vision_closed_loop_v1"))
+    report = run_bench2drive_vision_closed_loop(
+        manifest_path=Path(str(closed_loop.get("manifest") or "artifacts/bench2drive/vision_e2e_manifest_tensor_160.jsonl")),
+        checkpoint_path=Path(str(closed_loop.get("checkpoint") or "outputs/bench2drive_vision_e2e_trajectory_transformer_final/vision_e2e_planner_best.pt")),
+        output_dir=output_dir,
+        split=str(closed_loop.get("split") or "val"),
+        max_cases=int(closed_loop.get("max_cases") or 64),
+        max_frames_per_clip=int(closed_loop.get("max_frames_per_clip") or 20),
+        image_size=int(closed_loop.get("image_size") or 160),
+        device=str(closed_loop.get("device") or ""),
+        video_fps=int(closed_loop.get("video_fps") or 6),
+        case_selection=str(closed_loop.get("case_selection") or "balanced"),
+        control_config=ClosedLoopControlConfig(
+            dt_s=float(closed_loop.get("dt_s") if closed_loop.get("dt_s") is not None else 0.5),
+            horizon_s=float(closed_loop.get("horizon_s") if closed_loop.get("horizon_s") is not None else 10.0),
+            target_speed_mps=float(closed_loop.get("target_speed_mps") if closed_loop.get("target_speed_mps") is not None else 5.5),
+            brake_probability_threshold=float(closed_loop.get("brake_threshold") if closed_loop.get("brake_threshold") is not None else 0.85),
+            lookahead_m=float(closed_loop.get("lookahead_m") if closed_loop.get("lookahead_m") is not None else 9.0),
+            speed_kp=float(closed_loop.get("speed_kp") if closed_loop.get("speed_kp") is not None else 0.45),
+        ),
+    )
+    return {
+        "output_dir": str(output_dir),
+        "case_count": report.get("case_count"),
+        "comparison": report.get("comparison", {}),
+        "cases": report.get("cases", []),
+    }
+
+
+def _run_carla_vision_closed_loop_experiment(config: Mapping[str, Any]) -> Dict[str, Any]:
+    stage = dict(config.get("carla_vision_closed_loop") or {})
+    output_dir = Path(str(stage.get("output") or "outputs/carla_vision_closed_loop_v1"))
+    report = run_carla_vision_closed_loop(
+        carla_root=Path(str(stage.get("carla_root") or "external/carla/latest")),
+        checkpoint_path=Path(str(stage.get("checkpoint") or "outputs/bench2drive_vision_e2e_trajectory_transformer_final/vision_e2e_planner_best.pt")),
+        output_dir=output_dir,
+        host=str(stage.get("host") or "127.0.0.1"),
+        port=int(stage.get("port") or 2000),
+        town=str(stage.get("town") or ""),
+        spawn_index=int(stage.get("spawn_index") or 0),
+        destination_index=int(stage.get("destination_index") if stage.get("destination_index") is not None else -1),
+        route_sampling_resolution_m=float(
+            stage.get("route_sampling_resolution_m")
+            if stage.get("route_sampling_resolution_m") is not None
+            else 2.0
+        ),
+        route_min_length_m=float(
+            stage.get("route_min_length_m") if stage.get("route_min_length_m") is not None else 40.0
+        ),
+        route_max_length_m=float(
+            stage.get("route_max_length_m") if stage.get("route_max_length_m") is not None else 220.0
+        ),
+        route_preferred_length_m=float(
+            stage.get("route_preferred_length_m") if stage.get("route_preferred_length_m") is not None else 0.0
+        ),
+        fps=int(stage.get("fps") or 10),
+        horizon_s=float(stage.get("horizon_s") if stage.get("horizon_s") is not None else 30.0),
+        image_size=int(stage.get("image_size") or 160),
+        camera_width=int(stage.get("camera_width") or 320),
+        camera_height=int(stage.get("camera_height") or 180),
+        video_width=int(stage.get("video_width") or 0),
+        video_height=int(stage.get("video_height") or 0),
+        camera_fov=float(stage.get("camera_fov") if stage.get("camera_fov") is not None else 90.0),
+        carla_quality_level=str(stage.get("carla_quality_level") or stage.get("quality_level") or "Epic"),
+        scenario_type=str(stage.get("scenario_type") or "free_drive"),
+        scenario_name=str(stage.get("scenario_name") or ""),
+        scenario_params=dict(stage.get("scenario_params") or stage.get("parameters") or {}),
+        scenarios=list(stage.get("scenarios") or []),
+        target_speed_mps=float(stage.get("target_speed_mps") if stage.get("target_speed_mps") is not None else 7.0),
+        brake_probability_threshold=float(stage.get("brake_threshold") if stage.get("brake_threshold") is not None else 0.75),
+        enable_scenario_safety_override=bool(stage.get("enable_scenario_safety_override", True)),
+        enable_lane_departure_guard=bool(stage.get("enable_lane_departure_guard", True)),
+        condition_ego_route_traffic_lights=bool(stage.get("condition_ego_route_traffic_lights", False)),
+        device=str(stage.get("device") or ""),
+        auto_launch=bool(stage.get("auto_launch", False)),
+        cuda_visible_devices=str(stage.get("cuda_visible_devices") or ""),
+        traffic_manager_port=int(stage.get("traffic_manager_port") or 8000),
+        launch_timeout_s=float(stage.get("launch_timeout_s") if stage.get("launch_timeout_s") is not None else 90.0),
+        rpc_timeout_s=float(stage.get("rpc_timeout_s") if stage.get("rpc_timeout_s") is not None else 30.0),
+        keep_server=bool(stage.get("keep_server", False)),
+        video_fps=int(stage.get("video_fps") or 10),
+        video_encoder=str(stage.get("video_encoder") or "hevc_nvenc"),
+        video_nvenc_preset=str(stage.get("video_nvenc_preset") or "p4"),
+        video_quality=int(stage.get("video_quality") or 23),
+        render_gif=bool(stage.get("render_gif", True)),
+    )
+    if str(report.get("schema") or "") == "carla_vision_closed_loop_batch_v1":
+        aggregate = dict(report.get("aggregate") or {})
+        return {
+            "schema": report.get("schema"),
+            "output_dir": str(output_dir),
+            "metrics": aggregate,
+            "media": {},
+            "route_length_m": None,
+            "scenario_count": report.get("scenario_count"),
+            "scenarios": report.get("scenarios", []),
+        }
+    return {
+        "schema": report.get("schema"),
+        "output_dir": str(output_dir),
+        "metrics": report.get("metrics", {}),
+        "media": report.get("media", {}),
+        "route_length_m": report.get("route_length_m"),
+    }
+
+
+def _run_carla_semantic_demo_mining_experiment(config: Mapping[str, Any]) -> Dict[str, Any]:
+    stage = dict(config.get("carla_semantic_demo") or config.get("carla_semantic_demo_mining") or {})
+    output_dir = Path(str(stage.get("output") or "outputs/carla_semantic_demo_trajectory_transformer_final"))
+    result = mine_carla_semantic_demos(
+        carla_root=Path(str(stage.get("carla_root") or "external/carla/latest")),
+        checkpoint_path=Path(str(stage.get("checkpoint") or "outputs/bench2drive_vision_e2e_trajectory_transformer_final/vision_e2e_planner_best.pt")),
+        output_dir=output_dir,
+        trials_output_dir=Path(str(stage.get("trials_output") or "outputs/carla_semantic_demo_trajectory_transformer_final_trials")),
+        host=str(stage.get("host") or "127.0.0.1"),
+        port_start=int(stage.get("port_start") or 2040),
+        town=str(stage.get("town") or "Town10HD_Opt"),
+        fps=int(stage.get("fps") or 10),
+        horizon_s=float(stage.get("horizon_s") if stage.get("horizon_s") is not None else 18.0),
+        image_size=int(stage.get("image_size") or 160),
+        camera_width=int(stage.get("camera_width") or 640),
+        camera_height=int(stage.get("camera_height") or 360),
+        video_width=int(stage.get("video_width") or 1920),
+        video_height=int(stage.get("video_height") or 1080),
+        camera_fov=float(stage.get("camera_fov") if stage.get("camera_fov") is not None else 90.0),
+        carla_quality_level=str(stage.get("carla_quality_level") or stage.get("quality_level") or "Epic"),
+        brake_probability_threshold=float(stage.get("brake_threshold") if stage.get("brake_threshold") is not None else 0.82),
+        device=str(stage.get("device") or "cuda"),
+        auto_launch=bool(stage.get("auto_launch", True)),
+        cuda_visible_devices=str(stage.get("cuda_visible_devices") or ""),
+        traffic_manager_port_start=int(stage.get("traffic_manager_port_start") or 8040),
+        launch_timeout_s=float(stage.get("launch_timeout_s") if stage.get("launch_timeout_s") is not None else 180.0),
+        rpc_timeout_s=float(stage.get("rpc_timeout_s") if stage.get("rpc_timeout_s") is not None else 90.0),
+        keep_server=bool(stage.get("keep_server", False)),
+        reuse_carla_server=bool(stage.get("reuse_carla_server", True)),
+        video_fps=int(stage.get("video_fps") or 10),
+        video_encoder=str(stage.get("video_encoder") or "hevc_nvenc"),
+        video_nvenc_preset=str(stage.get("video_nvenc_preset") or "p4"),
+        video_quality=int(stage.get("video_quality") or 23),
+        render_gif=bool(stage.get("render_gif", False)),
+        enable_scenario_safety_override=bool(stage.get("enable_scenario_safety_override", True)),
+        enable_lane_departure_guard=bool(stage.get("enable_lane_departure_guard", False)),
+        condition_ego_route_traffic_lights=bool(stage.get("condition_ego_route_traffic_lights", True)),
+        route_sampling_resolution_m=float(
+            stage.get("route_sampling_resolution_m")
+            if stage.get("route_sampling_resolution_m") is not None
+            else 2.0
+        ),
+        route_min_length_m=float(
+            stage.get("route_min_length_m") if stage.get("route_min_length_m") is not None else 55.0
+        ),
+        route_max_length_m=float(
+            stage.get("route_max_length_m") if stage.get("route_max_length_m") is not None else 160.0
+        ),
+        route_preferred_length_m=float(
+            stage.get("route_preferred_length_m") if stage.get("route_preferred_length_m") is not None else 95.0
+        ),
+        max_attempts_per_target=int(stage.get("max_attempts_per_target") or 4),
+        targets=list(stage.get("targets") or []),
+        min_resolution_width=int(stage.get("min_resolution_width") or 1920),
+        min_resolution_height=int(stage.get("min_resolution_height") or 1080),
+        min_fps=float(stage.get("min_fps") if stage.get("min_fps") is not None else 8.0),
+        min_frames=int(stage.get("min_frames") or 80),
+        min_traffic_manager_vehicles=int(
+            stage.get("min_traffic_manager_vehicles")
+            if stage.get("min_traffic_manager_vehicles") is not None
+            else 1
+        ),
+        min_route_completion=float(
+            stage.get("min_route_completion") if stage.get("min_route_completion") is not None else 0.05
+        ),
+        max_mean_lateral_error_m=float(
+            stage.get("max_mean_lateral_error_m") if stage.get("max_mean_lateral_error_m") is not None else 2.5
+        ),
+        max_lateral_error_m=float(
+            stage.get("max_lateral_error_m") if stage.get("max_lateral_error_m") is not None else 6.0
+        ),
+        max_safety_override_ratio=float(
+            stage.get("max_safety_override_ratio") if stage.get("max_safety_override_ratio") is not None else 0.45
+        ),
+        max_nearest_actor_distance_m=float(
+            stage.get("max_nearest_actor_distance_m")
+            if stage.get("max_nearest_actor_distance_m") is not None
+            else 60.0
+        ),
+        nearby_actor_distance_m=float(
+            stage.get("nearby_actor_distance_m") if stage.get("nearby_actor_distance_m") is not None else 30.0
+        ),
+        min_nearby_actor_ratio=float(
+            stage.get("min_nearby_actor_ratio") if stage.get("min_nearby_actor_ratio") is not None else 0.30
+        ),
+    )
+    return result
 
 
 def _run_case_library_generation_experiment(config: Mapping[str, Any]) -> Dict[str, Any]:

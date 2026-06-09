@@ -17,6 +17,13 @@ DEFAULT_RESULT_SOURCES = [
     Path("outputs/risk_benchmark_suite_v1/experiment_result.json"),
     Path("outputs/nuplan_replay_sweep_v1/nuplan_replay_sweep_summary.json"),
     Path("outputs/nuplan_closed_loop_sweep_v1/nuplan_closed_loop_sweep_summary.json"),
+    Path("outputs/bench2drive_vision_e2e_trajectory_transformer_final/training_report.json"),
+    Path("outputs/bench2drive_vision_e2e_trajectory_transformer_final/eval/evaluation_report.json"),
+    Path("outputs/bench2drive_vision_e2e_trajectory_transformer_final/diagnostics/planner_diagnostics_report.json"),
+    Path("outputs/bench2drive_vision_closed_loop_trajectory_transformer_final/closed_loop_report.json"),
+    Path("outputs/carla_semantic_demo_trajectory_transformer_final/carla_semantic_demo_mining_report.json"),
+    Path("outputs/carla_semantic_demo_trajectory_transformer_final/carla_semantic_demo_report.json"),
+    Path("outputs/carla_semantic_demo_trajectory_transformer_final/carla_semantic_demo_audit.json"),
     Path("outputs/model_in_the_loop_failure_mining_v1/failure_mining_report.json"),
 ]
 
@@ -80,6 +87,22 @@ def _build_result_entry(path: Path) -> Optional[Dict[str, Any]]:
         return _nuplan_replay_sweep_entry(path, payload)
     if schema == "nuplan_closed_loop_sweep_v1":
         return _nuplan_closed_loop_sweep_entry(path, payload)
+    if schema == "bench2drive_vision_e2e_training_v1":
+        return _bench2drive_training_entry(path, payload)
+    if schema == "bench2drive_vision_e2e_eval_v1":
+        return _bench2drive_eval_entry(path, payload)
+    if schema == "bench2drive_vision_planner_diagnostics_v1":
+        return _bench2drive_planner_diagnostics_entry(path, payload)
+    if schema == "bench2drive_vision_closed_loop_v1":
+        return _bench2drive_closed_loop_entry(path, payload)
+    if schema == "carla_semantic_demo_mining_v1":
+        return _carla_semantic_demo_mining_entry(path, payload)
+    if schema == "carla_vision_closed_loop_batch_v1":
+        return _carla_vision_closed_loop_batch_entry(path, payload)
+    if schema == "carla_vision_closed_loop_v1":
+        return _carla_vision_closed_loop_entry(path, payload)
+    if schema == "carla_vision_video_audit_v1":
+        return _carla_video_audit_entry(path, payload)
     if schema == "model_in_the_loop_failure_mining_report_v1":
         return _failure_mining_entry(path, payload)
     return {
@@ -193,6 +216,233 @@ def _failure_mining_entry(path: Path, payload: Mapping[str, Any]) -> Dict[str, A
     }
 
 
+def _bench2drive_training_entry(path: Path, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    history = list(payload.get("history") or [])
+    latest = dict((history[-1] if history else {}).get("val") or {})
+    train = dict((history[-1] if history else {}).get("train") or {})
+    calibration = dict(payload.get("calibration") or {})
+    return {
+        "layer_id": "bench2drive_vision_planner",
+        "source_path": str(path),
+        "schema": str(payload.get("schema") or ""),
+        "summary": {
+            "checkpoint_path": payload.get("checkpoint_path"),
+            "model_size": payload.get("model_size"),
+            "architecture": payload.get("architecture"),
+            "trajectory_selection": payload.get("trajectory_selection"),
+            "trajectory_temperature": payload.get("trajectory_temperature"),
+            "calibration_method": calibration.get("method") or calibration.get("rationale"),
+            "distributed_world_size": payload.get("distributed_world_size"),
+            "precision": payload.get("precision"),
+        },
+        "metrics": {
+            "train_sample_count": payload.get("train_sample_count"),
+            "val_sample_count": payload.get("val_sample_count"),
+            "runtime_s": payload.get("runtime_s"),
+            "train_samples_per_s": train.get("samples_per_s"),
+            "uncalibrated_val_ade_m": latest.get("ade_m"),
+            "uncalibrated_val_fde_m": latest.get("fde_m"),
+            "uncalibrated_val_brake_accuracy": latest.get("brake_accuracy"),
+        },
+    }
+
+
+def _bench2drive_eval_entry(path: Path, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    metrics = dict(payload.get("metrics") or {})
+    return {
+        "layer_id": "bench2drive_vision_planner",
+        "source_path": str(path),
+        "schema": str(payload.get("schema") or ""),
+        "summary": {
+            "checkpoint_path": payload.get("checkpoint_path"),
+            "split": payload.get("split"),
+            "sample_count": payload.get("sample_count"),
+        },
+        "metrics": {
+            "ade_m": metrics.get("ade_m"),
+            "fde_m": metrics.get("fde_m"),
+            "loss": metrics.get("loss"),
+            "lateral_mae_m": metrics.get("lateral_mae_m"),
+            "turn_lateral_mae_m": metrics.get("turn_lateral_mae_m"),
+            "oracle_ade_m": metrics.get("oracle_ade_m"),
+            "oracle_fde_m": metrics.get("oracle_fde_m"),
+            "brake_accuracy": metrics.get("brake_accuracy"),
+            "brake_f1": metrics.get("brake_f1"),
+        },
+    }
+
+
+def _bench2drive_planner_diagnostics_entry(path: Path, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    aggregate = dict(payload.get("aggregate") or {})
+    readiness = dict(payload.get("readiness") or {})
+    return {
+        "layer_id": "bench2drive_vision_planner",
+        "source_path": str(path),
+        "schema": str(payload.get("schema") or ""),
+        "summary": {
+            "predictions_path": payload.get("predictions_path"),
+            "evaluation_report_path": payload.get("evaluation_report_path"),
+            "status": readiness.get("status"),
+            "findings": readiness.get("findings", []),
+        },
+        "metrics": {
+            "sample_count": payload.get("sample_count"),
+            "mean_ade_m": aggregate.get("mean_ade_m"),
+            "mean_fde_m": aggregate.get("mean_fde_m"),
+            "mean_path_length_ratio": aggregate.get("mean_path_length_ratio"),
+            "underreach_rate": aggregate.get("underreach_rate"),
+            "severe_underreach_rate": aggregate.get("severe_underreach_rate"),
+            "high_lateral_error_rate": aggregate.get("high_lateral_error_rate"),
+            "brake_f1": aggregate.get("brake_f1"),
+            "predicted_to_target_speed_ratio": readiness.get("mean_predicted_to_target_speed_ratio"),
+        },
+    }
+
+
+def _bench2drive_closed_loop_entry(path: Path, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    comparison = dict(payload.get("comparison") or {})
+    metrics = dict(comparison.get("metrics") or {})
+    return {
+        "layer_id": "bench2drive_vision_closed_loop",
+        "source_path": str(path),
+        "schema": str(payload.get("schema") or ""),
+        "summary": {
+            "checkpoint_path": payload.get("checkpoint_path"),
+            "split": payload.get("split"),
+            "case_count": payload.get("case_count"),
+            "output_dir": payload.get("output_dir"),
+        },
+        "metrics": {
+            "case_count": payload.get("case_count"),
+            "closed_loop_ade_m": metrics.get("mean_closed_loop_ade_m"),
+            "closed_loop_fde_m": metrics.get("mean_closed_loop_fde_m"),
+            "mean_lateral_error_m": metrics.get("mean_mean_lateral_error_m"),
+            "route_completion": metrics.get("mean_route_completion"),
+            "closed_loop_score": metrics.get("mean_closed_loop_score"),
+        },
+    }
+
+
+def _carla_vision_closed_loop_entry(path: Path, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    metrics = dict(payload.get("metrics") or {})
+    media = dict(payload.get("media") or {})
+    scenario = dict(payload.get("scenario") or {})
+    scenario_type = str(scenario.get("type") or "")
+    layer_id = "carla_vision_closed_loop"
+    return {
+        "layer_id": layer_id,
+        "source_path": str(path),
+        "schema": str(payload.get("schema") or ""),
+        "summary": {
+            "town": payload.get("town"),
+            "scenario_name": scenario.get("name"),
+            "scenario_type": scenario_type,
+            "checkpoint_path": payload.get("checkpoint_path"),
+            "output_dir": payload.get("output_dir"),
+            "gif_path": media.get("gif_path"),
+            "video_path": media.get("video_path"),
+        },
+        "metrics": {
+            "route_length_m": payload.get("route_length_m"),
+            "frame_count": metrics.get("frame_count"),
+            "duration_s": metrics.get("duration_s"),
+            "route_completion": metrics.get("route_completion"),
+            "driving_score": metrics.get("driving_score"),
+            "collision_count": metrics.get("collision_count"),
+            "mean_lateral_error_m": metrics.get("mean_lateral_error_m"),
+            "max_lateral_error_m": metrics.get("max_lateral_error_m"),
+            "comfort_violation_count": metrics.get("comfort_violation_count"),
+        },
+    }
+
+
+def _carla_vision_closed_loop_batch_entry(path: Path, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    aggregate = dict(payload.get("aggregate") or {})
+    scenarios = list(payload.get("scenarios") or [])
+    layer_id = "carla_semantic_demo" if payload.get("semantic_targets") or "carla_semantic_demo" in str(path) else "carla_vision_closed_loop"
+    return {
+        "layer_id": layer_id,
+        "source_path": str(path),
+        "schema": str(payload.get("schema") or ""),
+        "summary": {
+            "town": payload.get("town"),
+            "scenario_count": payload.get("scenario_count"),
+            "output_dir": payload.get("output_dir"),
+            "scenario_names": [dict(row).get("name") for row in scenarios],
+        },
+        "metrics": {
+            "scenario_count": payload.get("scenario_count"),
+            "total_frames": aggregate.get("total_frames"),
+            "mean_route_completion": aggregate.get("mean_route_completion"),
+            "mean_driving_score": aggregate.get("mean_driving_score"),
+            "total_collisions": aggregate.get("total_collisions"),
+            "total_traffic_manager_vehicles": aggregate.get("total_traffic_manager_vehicles"),
+            "total_scripted_vehicles": aggregate.get("total_scripted_vehicles"),
+            "total_crosswalk_pedestrians": aggregate.get("total_crosswalk_pedestrians"),
+        },
+    }
+
+
+def _carla_video_audit_entry(path: Path, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    summary = dict(payload.get("summary") or {})
+    report_path = str(payload.get("report_path") or "")
+    layer_id = "carla_semantic_demo" if "carla_semantic_demo" in f"{path} {report_path}" else "carla_vision_closed_loop"
+    return {
+        "layer_id": layer_id,
+        "source_path": str(path),
+        "schema": str(payload.get("schema") or ""),
+        "summary": {
+            "status": payload.get("status"),
+            "report_path": payload.get("report_path"),
+            "failures": payload.get("failures", []),
+            "warnings": payload.get("warnings", []),
+        },
+        "metrics": {
+            "scenario_count": payload.get("scenario_count"),
+            "failure_count": payload.get("failure_count"),
+            "warning_count": payload.get("warning_count"),
+            "passed_scenarios": summary.get("passed_scenarios"),
+            "failed_scenarios": summary.get("failed_scenarios"),
+            "total_video_frames": summary.get("total_video_frames"),
+            "total_state_rows": summary.get("total_state_rows"),
+            "total_collisions": summary.get("total_collisions"),
+            "total_traffic_manager_vehicles": summary.get("total_traffic_manager_vehicles"),
+            "mean_nearby_actor_ratio": summary.get("mean_nearby_actor_ratio"),
+        },
+    }
+
+
+def _carla_semantic_demo_mining_entry(path: Path, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    final_report = dict(payload.get("final_report") or {})
+    final_audit = dict(payload.get("final_audit") or {})
+    aggregate = dict(final_report.get("aggregate") or {})
+    return {
+        "layer_id": "carla_semantic_demo",
+        "source_path": str(path),
+        "schema": str(payload.get("schema") or ""),
+        "summary": {
+            "status": payload.get("status"),
+            "output_dir": payload.get("output_dir"),
+            "report_path": payload.get("report_path"),
+            "audit_path": payload.get("audit_path"),
+        },
+        "metrics": {
+            "target_count": payload.get("target_count"),
+            "passed_target_count": payload.get("passed_target_count"),
+            "attempt_count": payload.get("attempt_count"),
+            "scenario_count": final_report.get("scenario_count"),
+            "semantic_audit_status": final_audit.get("status"),
+            "semantic_audit_failure_count": final_audit.get("failure_count"),
+            "semantic_audit_warning_count": final_audit.get("warning_count"),
+            "total_frames": aggregate.get("total_frames"),
+            "total_traffic_manager_vehicles": aggregate.get("total_traffic_manager_vehicles"),
+            "total_scripted_vehicles": aggregate.get("total_scripted_vehicles"),
+            "total_crosswalk_pedestrians": aggregate.get("total_crosswalk_pedestrians"),
+            "total_collisions": aggregate.get("total_collisions"),
+        },
+    }
+
+
 def _overall_rows(payload: Mapping[str, Any]) -> List[Mapping[str, Any]]:
     return [
         dict(row)
@@ -277,6 +527,26 @@ def _infer_source_kind(path: Path) -> str:
         return "nuplan_closed_loop_sweep"
     if "failure_mining" in name:
         return "failure_mining_report"
+    if "bench2drive" in name and "evaluation_report" in name:
+        return "bench2drive_eval_report"
+    if "bench2drive" in name and "planner_diagnostics" in name:
+        return "bench2drive_planner_diagnostics"
+    if "bench2drive" in name and "training_report" in name:
+        return "bench2drive_training_report"
+    if "bench2drive" in name and "closed_loop_report" in name:
+        return "bench2drive_closed_loop_report"
+    if "carla_semantic_demo" in name:
+        if "audit" in name:
+            return "carla_semantic_demo_audit"
+        if "mining" in name:
+            return "carla_semantic_demo_mining_report"
+        return "carla_semantic_demo_report"
+    if "carla_vision_batch" in name:
+        if "video_audit" in name:
+            return "carla_vision_video_audit"
+        return "carla_vision_batch_report"
+    if "carla_vision_closed_loop" in name:
+        return "carla_vision_closed_loop_report"
     if "risk_benchmark_suite" in name:
         return "risk_benchmark_suite_result"
     return "result_source"

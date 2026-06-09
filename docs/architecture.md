@@ -2,14 +2,15 @@
 
 ## System Goal
 
-This project turns free-form risky-scene descriptions into validated `nuScenes` cases and benchmark-ready artifacts. It also includes `nuPlan` replay-regression and closed-loop replay extensions for simulation-style evaluation.
+The system turns free-form risky-scene descriptions into validated driving cases, benchmark-ready artifacts, and model-in-the-loop evidence. The organizing unit is a shared risk-scenario taxonomy rather than a single dataset. `nuScenes` provides real-world scenario mining and benchmark anchors, `nuPlan` provides logged replay evaluation, `Bench2Drive` provides supervised vision-planner training data, and `CARLA` provides audit-gated visual closed-loop rollouts.
 
 The target workflow is:
 
 1. describe a risk scenario in natural language
-2. retrieve candidate scenes from a prebuilt `SQLite` index
-3. validate them with deterministic checks
-4. export evidence figures, reports, and benchmark summaries
+2. map the description to a scenario family in [configs/scenario_taxonomy.yaml](../configs/scenario_taxonomy.yaml)
+3. retrieve or instantiate matching cases from the appropriate backend
+4. validate them with deterministic checks
+5. export evidence figures, reports, benchmark summaries, and model-evaluation artifacts
 
 ## Pipeline
 
@@ -63,7 +64,7 @@ The target workflow is:
 
 ## 6. Counterfactual Benchmark Generation
 
-The repository supports counterfactual benchmark generation from validated case libraries.
+The benchmark generator supports counterfactual expansion from validated case libraries.
 
 The generator:
 
@@ -73,11 +74,11 @@ The generator:
 - keeps explicit `reference_case_keys` for objective evaluation
 - carries reference event windows for localization-aware scoring when the source case provides event localization
 
-This extends the repository from case retrieval to benchmark construction and contrastive evaluation.
+This extends case retrieval into benchmark construction and contrastive evaluation.
 
 ## 7. Scenario Mining Benchmark Layer
 
-The repository exposes a reference-aware benchmark layer derived from validated case libraries.
+The scenario-mining layer derives reference-aware benchmark targets from validated case libraries.
 
 This layer keeps explicit:
 
@@ -95,7 +96,7 @@ That allows the metrics layer to move beyond generic retrieval scores and report
 
 ## 8. Scenario-Conditioned Perception Benchmark Layer
 
-The repository also derives a compact perception benchmark from scenario-mining anchors.
+The perception layer derives compact evaluation slices from scenario-mining anchors.
 
 This layer exports:
 
@@ -122,7 +123,7 @@ The layer also includes:
 
 ## 9. Risk-Conditioned BEV Occupancy Benchmark Layer
 
-The repository derives sparse BEV occupancy slices from the perception benchmark and the indexed `nuScenes` actor table.
+The BEV occupancy layer derives sparse occupancy slices from the perception benchmark and the indexed `nuScenes` actor table.
 
 This layer keeps:
 
@@ -144,7 +145,7 @@ This layer uses sparse center-cell occupancy labels to test whether perception o
 
 ## 10. Scenario-Conditioned World-Model Benchmark Layer
 
-The repository also derives a compact world-model benchmark from the perception-slice layer.
+The world-model layer derives compact prediction targets from the perception-slice layer.
 
 This layer keeps:
 
@@ -206,7 +207,7 @@ The evaluation layer compares predicted ego rollouts against logged replay windo
 - failure-taxonomy CSV exports by profile, scenario family, tag, and difficulty
 - qualitative replay case-study figures with per-profile trajectory overlays
 
-This extension is a compact regression harness that connects the repository to simulation-style testing while preserving the main scope of dataset indexing, scenario mining, and benchmark generation.
+This extension is a compact regression harness for simulation-style testing while preserving the main scope of dataset indexing, scenario mining, and benchmark generation.
 
 ## 12. nuPlan Closed-Loop Replay
 
@@ -221,7 +222,30 @@ The simulation loop keeps:
 
 The scope is replay-based closed-loop ego simulation. Surrounding agents are replayed from logs, which keeps the scene context deterministic while exposing accumulated ego-state error.
 
-## 13. Full Benchmark Suite
+## 13. Bench2Drive Vision Planner
+
+The Bench2Drive extension trains a compact multi-camera trajectory planner from six RGB views and route features. It serves as the supervised vision-planner backend for the shared scenario taxonomy.
+
+The model uses:
+
+- a shared convolutional image encoder over all camera views
+- spatial camera tokens and learned camera embeddings
+- a transformer encoder over route, camera, and trajectory-mode tokens
+- multiple future-trajectory modes with mode logits
+- temperature-calibrated expected trajectory selection over predicted modes
+- control and brake heads for model-in-the-loop rollout
+
+Training uses a predecoded tensor cache and distributed data parallelism. The supervised objective combines waypoint regression, control regression, brake classification, lateral-error weighting, risk-sample weighting, and trajectory-mode classification. The resulting checkpoint is evaluated by supervised validation, simplified model-in-the-loop rollout, and selected CARLA semantic targets.
+
+## 14. CARLA Semantic Demo Mining
+
+The CARLA extension evaluates the trained vision planner in synchronous visual rollouts. Its target definitions are selected from the same scenario taxonomy used for dataset mining and replay evaluation.
+
+The ego vehicle is controlled by model-predicted waypoints through a transparent low-level controller and safety-brake layer. It does not use CARLA autopilot or CARLA map-route tracking for ego control. Ambient vehicles are controlled by CARLA Traffic Manager. Scenario control is limited to the target pedestrian-crossing event and optional ego-route traffic-light phase conditioning.
+
+The semantic mining stage keeps only rollouts that pass video, control-attribution, traffic-context, collision, and scenario-evidence checks. The retained artifact includes a 1080p HEVC video, state trace, route trace, contact sheet, rollout figure, and audit report. Safety-brake attribution is reported separately from direct model control.
+
+## 15. Full Benchmark Suite
 
 The default full-suite entry point is `configs/full_benchmark_suite.yaml`.
 
@@ -231,17 +255,19 @@ It executes:
 - `nuScenes` scenario-mining, perception, BEV occupancy, and world-model benchmark generation
 - `nuPlan` cross-split replay-regression sweep
 - `nuPlan` cross-split closed-loop replay sweep
+- Bench2Drive and CARLA result collection through the registry
 - model-in-the-loop failure mining
 - result-registry export
 
 Each stage writes a separate experiment result, while the suite writes a compact top-level summary. Individual benchmark layers remain reusable through the same structured config interface.
 
-## 14. Unified Benchmark Interface
+## 16. Unified Benchmark Interface
 
-The project exposes a structural layer above individual benchmark implementations.
+The benchmark stack exposes a structural layer above individual benchmark implementations.
 
 The interface includes:
 
+- `scenario_taxonomy_v1` for aligning scenario families across dataset mining, replay, planner training, and simulator evidence
 - `unified_risk_case_v1` for common case metadata across `nuScenes` and `nuPlan`
 - `benchmark_registry_v1` for declaring benchmark layers, inputs, outputs, and metrics
 - `benchmark_result_registry_v1` for summarizing completed benchmark-layer results
@@ -249,11 +275,11 @@ The interface includes:
 - `benchmark_artifact_manifest_v1` for recording benchmark outputs and evidence artifacts
 - YAML experiment configs for reproducible study entry points
 
-Benchmark-specific schemas remain the source of task-level detail. The interface adds a common indexing and reporting layer so scenario mining, perception slices, world-model slices, and replay regression can be compared as parts of one evaluation framework.
+Benchmark-specific schemas remain the source of task-level detail. The interface adds a common indexing and reporting layer so scenario mining, perception slices, world-model slices, replay regression, vision-planner validation, and semantic demo mining can be compared as parts of one evaluation framework.
 
 The default `nuScenes` benchmark suite is generated through `configs/risk_benchmark_suite.yaml`. This config derives scenario-mining queries, perception slices, world-model slices, sparse BEV occupancy slices, and proxy-study outputs from the same validated case library and SQLite index. The default `max_cases` controls the exported benchmark size; it is a sampling cap rather than a dataset-size estimate.
 
-## 15. Structural Multimodal Retrieval
+## 17. Structural Multimodal Retrieval
 
 The retrieval pipeline includes a deterministic multimodal reranking layer. It scores each candidate with four structural signals:
 
@@ -264,7 +290,7 @@ The retrieval pipeline includes a deterministic multimodal reranking layer. It s
 
 The module writes per-candidate modality scores and fused scores to JSON, CSV, and Markdown. It is an auditable retrieval model for scene mining; learned perception backbones remain outside this layer.
 
-## 16. Learned Scene Reranking
+## 18. Learned Scene Reranking
 
 The learned retrieval layer trains a compact PyTorch query-scene scorer from weakly labeled `v1.0-trainval` scenario families.
 
@@ -283,7 +309,7 @@ Outputs include a checkpoint, JSON training report, Markdown training summary, a
 
 The failure-aware diagnostic evaluates the learned retriever on update queries produced by failure mining. The learned model expands candidate coverage, and deterministic validation performs final case selection.
 
-## 17. Model-in-the-loop Failure Mining
+## 19. Model-in-the-loop Failure Mining
 
 The failure-mining layer reads metric artifacts from perception, BEV occupancy, world-model, external forecast, `nuPlan` replay-regression, and `nuPlan` closed-loop replay studies.
 
@@ -295,7 +321,7 @@ It exports:
 
 This creates a closed evaluation loop: model outputs are evaluated, failure patterns are mined, and new retrieval queries are generated from the observed failures.
 
-## 18. Research Agent
+## 20. Research Agent
 
 The research-agent layer is a LangGraph workflow that reads local benchmark artifacts and calls a local Ollama model.
 
@@ -307,7 +333,7 @@ The graph uses three nodes:
 
 Deterministic metrics remain the evidence source. The agent operates after evaluation and is used to inspect completed capabilities, identify remaining gaps, propose benchmark update queries, and list unsupported claims.
 
-## 19. Agent Formulation
+## 21. Agent Formulation
 
 The agent component is implemented as an orchestration loop:
 
@@ -319,7 +345,7 @@ The agent component is implemented as an orchestration loop:
 
 This is a hybrid orchestration pattern: a local Ollama model handles intent interpretation, while deterministic code handles evidence generation and reproducibility.
 
-## 20. Hybrid Formulation
+## 22. Hybrid Formulation
 
 The `hybrid_agent` evaluates rule and local-model outputs as separate hypotheses before selecting an evidence-supported result:
 
@@ -330,13 +356,13 @@ The `hybrid_agent` evaluates rule and local-model outputs as separate hypotheses
 
 This design exposes planner disagreement and records the selected evidence-supported hypothesis in the query report.
 
-## 21. Scope Boundaries
+## 23. Scope Boundaries
 
-The maintained scope is indexing, retrieval, validation, reranking, benchmark generation, external-baseline adapters, replay regression, and closed-loop replay evaluation.
+The maintained scope covers indexing, retrieval, validation, reranking, benchmark generation, external-baseline adapters, replay regression, closed-loop replay evaluation, and compact vision-planner training.
 
-Large-stack components remain outside the repository scope:
+Large-stack components remain outside the maintained scope:
 
-- end-to-end driving policy training
+- production-scale driving policy training
 - full autonomy-stack simulation
 - production UI serving
 - large-scale platform maintenance

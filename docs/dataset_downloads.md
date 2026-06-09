@@ -2,7 +2,7 @@
 
 Dataset archives, extracted datasets, map files, and generated artifacts are excluded from version control.
 
-Download the dataset files yourself and place them under `archives/` before running the preparation commands.
+Download the dataset files from the official dataset or simulator release pages and place them under the expected local layout before running the preparation commands.
 
 ## Download URLs
 
@@ -77,4 +77,29 @@ data/nuplan/
     data/cache/train_pittsburgh/
     data/cache/train_singapore/
     nuplan-v1.1/splits/
+```
+
+## CARLA Runtime
+
+Download the Linux CARLA package and additional maps from the official CARLA release page. The simulator utilities expect the extracted runtime under:
+
+```text
+external/carla/latest/
+  CarlaUE4.sh
+  CarlaUE4/
+  PythonAPI/carla/dist/
+```
+
+## Bench2Drive Data
+
+Download Bench2Drive Base1000 from the official Bench2Drive release page. The vision planner expects the archive set under:
+
+```text
+data/bench2drive/
+  Bench2Drive-Base/
+    Accident_Town*_Route*_Weather*.tar.gz
+    ...
+  cache/
+    vision_e2e/
+    vision_e2e_tensor_cache/
 ```

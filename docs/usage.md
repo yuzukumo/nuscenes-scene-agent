@@ -55,11 +55,13 @@ export NUSC_SCENE_AGENT_OLLAMA_BASE_URL="http://127.0.0.1:11434"
 export NUSC_SCENE_AGENT_OLLAMA_MODEL="gemma4:latest"
 ```
 
-## End-to-End Suite
+## Full Benchmark Suite
 
 ```bash
 python -m nusc_scene_agent run-full-benchmark-suite
 ```
+
+The suite uses the shared scenario taxonomy in [configs/scenario_taxonomy.yaml](../configs/scenario_taxonomy.yaml) to keep dataset mining, replay evaluation, planner diagnostics, and semantic simulator demos aligned by risk family.
 
 This executes the configured pipeline in [configs/full_benchmark_suite.yaml](../configs/full_benchmark_suite.yaml):
 
@@ -139,6 +141,94 @@ python -m nusc_scene_agent run-experiment-config \
 
 python -m nusc_scene_agent run-experiment-config \
   --config configs/nuplan_closed_loop_sweep_medium.yaml
+```
+
+Inspect the CARLA runtime and mine semantic-gated visual closed-loop demos:
+
+```bash
+python -m nusc_scene_agent inspect-carla \
+  --carla-root external/carla/latest
+
+python -m nusc_scene_agent print-carla-launch-command \
+  --carla-root external/carla/latest \
+  --cuda-visible-devices 4
+
+python -m nusc_scene_agent run-experiment-config \
+  --config configs/carla_semantic_demo.yaml
+
+python -m nusc_scene_agent audit-carla-vision-rollout \
+  --report outputs/carla_semantic_demo_trajectory_transformer_final/carla_semantic_demo_report.json \
+  --output outputs/carla_semantic_demo_trajectory_transformer_final/carla_semantic_demo_audit.json \
+  --require-semantic-match
+```
+
+Train and evaluate the Bench2Drive vision planner. This stage builds a predecoded tensor cache and trains with `torchrun` distributed data parallelism.
+
+```bash
+python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+python -m pip install -e ".[vision]"
+
+python -m nusc_scene_agent inspect-bench2drive \
+  --dataset-root data/bench2drive/Bench2Drive-Base
+
+python -m nusc_scene_agent build-bench2drive-vision-manifest \
+  --dataset-root data/bench2drive/Bench2Drive-Base \
+  --output artifacts/bench2drive/vision_e2e_manifest.jsonl \
+  --frame-stride 5 \
+  --future-steps 5 \
+  --future-frame-stride 5 \
+  --cache-root data/bench2drive/cache/vision_e2e
+
+python -m nusc_scene_agent build-bench2drive-vision-tensor-cache \
+  --manifest artifacts/bench2drive/vision_e2e_manifest.jsonl \
+  --output artifacts/bench2drive/vision_e2e_manifest_tensor_160.jsonl \
+  --cache-dir data/bench2drive/cache/vision_e2e_tensor_cache \
+  --image-size 160 \
+  --num-workers 8 \
+  --chunk-rows 512
+
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --standalone --nproc_per_node=8 \
+  -m nusc_scene_agent train-bench2drive-vision-planner \
+  --manifest artifacts/bench2drive/vision_e2e_manifest_tensor_160.jsonl \
+  --output outputs/bench2drive_vision_e2e_trajectory_transformer_final \
+  --epochs 24 \
+  --batch-size 64 \
+  --image-size 160 \
+  --model-size research \
+  --architecture trajectory_transformer \
+  --camera-pooling transformer \
+  --trajectory-modes 4 \
+  --trajectory-selection expected \
+  --trajectory-temperature 0.5 \
+  --dropout 0.05 \
+  --num-workers 4 \
+  --prefetch-factor 4 \
+  --precision fp16 \
+  --selection-metric risk_aware \
+  --brake-loss-weight 0.25 \
+  --brake-positive-weight 1.25 \
+  --risk-sample-weight 1.25 \
+  --lateral-loss-weight 2.0 \
+  --turn-sample-weight 2.0 \
+  --mode-classification-weight 0.05
+
+CUDA_VISIBLE_DEVICES=0 python -m nusc_scene_agent evaluate-bench2drive-vision-planner \
+  --manifest artifacts/bench2drive/vision_e2e_manifest_tensor_160.jsonl \
+  --checkpoint outputs/bench2drive_vision_e2e_trajectory_transformer_final/vision_e2e_planner_best.pt \
+  --output outputs/bench2drive_vision_e2e_trajectory_transformer_final/eval \
+  --split val \
+  --batch-size 128 \
+  --image-size 160 \
+  --num-workers 4 \
+  --prefetch-factor 4
+
+python -m nusc_scene_agent diagnose-bench2drive-vision-planner \
+  --predictions outputs/bench2drive_vision_e2e_trajectory_transformer_final/eval/predictions.jsonl \
+  --evaluation-report outputs/bench2drive_vision_e2e_trajectory_transformer_final/eval/evaluation_report.json \
+  --output outputs/bench2drive_vision_e2e_trajectory_transformer_final/diagnostics
+
+CUDA_VISIBLE_DEVICES=0 python -m nusc_scene_agent run-experiment-config \
+  --config configs/bench2drive_vision_closed_loop.yaml
 ```
 
 Run failure mining from generated metric artifacts:

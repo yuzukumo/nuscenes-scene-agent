@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import List, Optional
 
@@ -25,6 +26,42 @@ from nusc_scene_agent.bev_occupancy_benchmark import (
     generate_proxy_bev_occupancy_predictions,
     run_proxy_bev_occupancy_study,
 )
+from nusc_scene_agent.bench2drive_e2e import (
+    DEFAULT_BENCH2DRIVE_CACHE_ROOT,
+    DEFAULT_BENCH2DRIVE_MANIFEST,
+    DEFAULT_BENCH2DRIVE_OUTPUT,
+    DEFAULT_BENCH2DRIVE_ROOT,
+    DEFAULT_BENCH2DRIVE_TENSOR_CACHE_ROOT,
+    DEFAULT_BENCH2DRIVE_TENSOR_MANIFEST,
+    build_bench2drive_vision_manifest,
+    build_bench2drive_vision_tensor_cache,
+    diagnose_vision_e2e_predictions,
+    evaluate_vision_e2e_planner,
+    inspect_bench2drive_dataset,
+    train_vision_e2e_planner,
+)
+from nusc_scene_agent.bench2drive_closed_loop import (
+    DEFAULT_BENCH2DRIVE_CLOSED_LOOP_OUTPUT,
+    ClosedLoopControlConfig,
+    run_bench2drive_vision_closed_loop,
+)
+from nusc_scene_agent.carla_closed_loop import (
+    DEFAULT_CARLA_ROOT,
+    build_carla_launch_command,
+    format_carla_launch_command,
+    inspect_carla_runtime,
+    run_carla_connection_smoke,
+)
+from nusc_scene_agent.carla_vision_closed_loop import (
+    DEFAULT_CARLA_VISION_OUTPUT,
+    run_carla_vision_closed_loop,
+)
+from nusc_scene_agent.carla_semantic_demo_mining import (
+    DEFAULT_CARLA_SEMANTIC_DEMO_OUTPUT,
+    DEFAULT_CARLA_SEMANTIC_DEMO_TRIALS_OUTPUT,
+    mine_carla_semantic_demos,
+)
+from nusc_scene_agent.carla_video_audit import audit_carla_vision_rollouts
 from nusc_scene_agent.case_library import build_case_library, write_case_library
 from nusc_scene_agent.benchmark_schema import load_benchmark_config
 from nusc_scene_agent.benchmark_registry import build_default_benchmark_registry, write_benchmark_registry
@@ -633,6 +670,295 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Closed-loop planner profile. Repeatable. Defaults to all profiles.",
     )
 
+    inspect_bench2drive_parser = subparsers.add_parser(
+        "inspect-bench2drive",
+        help="Inspect the local Bench2Drive training archive layout.",
+    )
+    inspect_bench2drive_parser.add_argument("--dataset-root", default=str(DEFAULT_BENCH2DRIVE_ROOT))
+    inspect_bench2drive_parser.add_argument("--sample-archives", type=int, default=3)
+
+    build_bench2drive_manifest_parser = subparsers.add_parser(
+        "build-bench2drive-vision-manifest",
+        help="Build a sampled Bench2Drive manifest for vision planner training.",
+    )
+    build_bench2drive_manifest_parser.add_argument("--dataset-root", default=str(DEFAULT_BENCH2DRIVE_ROOT))
+    build_bench2drive_manifest_parser.add_argument("--output", default=str(DEFAULT_BENCH2DRIVE_MANIFEST))
+    build_bench2drive_manifest_parser.add_argument("--max-archives", type=int, default=0)
+    build_bench2drive_manifest_parser.add_argument("--frame-stride", type=int, default=5)
+    build_bench2drive_manifest_parser.add_argument("--future-steps", type=int, default=5)
+    build_bench2drive_manifest_parser.add_argument("--future-frame-stride", type=int, default=5)
+    build_bench2drive_manifest_parser.add_argument("--train-fraction", type=float, default=0.9)
+    build_bench2drive_manifest_parser.add_argument("--seed", type=int, default=7)
+    build_bench2drive_manifest_parser.add_argument("--cache-root", default=str(DEFAULT_BENCH2DRIVE_CACHE_ROOT))
+    build_bench2drive_manifest_parser.add_argument("--no-cache", action="store_true")
+    build_bench2drive_manifest_parser.add_argument("--verbose", action="store_true")
+
+    build_bench2drive_tensor_cache_parser = subparsers.add_parser(
+        "build-bench2drive-vision-tensor-cache",
+        help="Build a predecoded Bench2Drive multi-camera tensor cache for faster vision training.",
+    )
+    build_bench2drive_tensor_cache_parser.add_argument("--manifest", default=str(DEFAULT_BENCH2DRIVE_MANIFEST))
+    build_bench2drive_tensor_cache_parser.add_argument("--output", default=str(DEFAULT_BENCH2DRIVE_TENSOR_MANIFEST))
+    build_bench2drive_tensor_cache_parser.add_argument("--cache-dir", default=str(DEFAULT_BENCH2DRIVE_TENSOR_CACHE_ROOT))
+    build_bench2drive_tensor_cache_parser.add_argument("--image-size", type=int, default=160)
+    build_bench2drive_tensor_cache_parser.add_argument("--max-rows", type=int, default=0)
+    build_bench2drive_tensor_cache_parser.add_argument("--num-workers", type=int, default=0)
+    build_bench2drive_tensor_cache_parser.add_argument("--chunk-rows", type=int, default=512)
+    build_bench2drive_tensor_cache_parser.add_argument("--verbose", action="store_true")
+
+    train_bench2drive_parser = subparsers.add_parser(
+        "train-bench2drive-vision-planner",
+        help="Train the Bench2Drive vision planner from the sampled manifest.",
+    )
+    train_bench2drive_parser.add_argument("--manifest", default=str(DEFAULT_BENCH2DRIVE_MANIFEST))
+    train_bench2drive_parser.add_argument("--output", default=str(DEFAULT_BENCH2DRIVE_OUTPUT))
+    train_bench2drive_parser.add_argument("--epochs", type=int, default=3)
+    train_bench2drive_parser.add_argument("--batch-size", type=int, default=32)
+    train_bench2drive_parser.add_argument("--learning-rate", type=float, default=1e-4)
+    train_bench2drive_parser.add_argument("--weight-decay", type=float, default=1e-4)
+    train_bench2drive_parser.add_argument("--image-size", type=int, default=160)
+    train_bench2drive_parser.add_argument("--model-size", choices=["tiny", "base", "large", "research"], default="base")
+    train_bench2drive_parser.add_argument(
+        "--architecture",
+        choices=["conv_mlp", "trajectory_transformer"],
+        default="conv_mlp",
+    )
+    train_bench2drive_parser.add_argument("--camera-pooling", choices=["mean", "attention", "transformer"], default="mean")
+    train_bench2drive_parser.add_argument("--dropout", type=float, default=0.0)
+    train_bench2drive_parser.add_argument("--trajectory-modes", type=int, default=1)
+    train_bench2drive_parser.add_argument(
+        "--trajectory-selection",
+        choices=["argmax", "expected", "topk_expected", "top2_expected"],
+        default="argmax",
+    )
+    train_bench2drive_parser.add_argument("--trajectory-top-k", type=int, default=2)
+    train_bench2drive_parser.add_argument("--trajectory-temperature", type=float, default=1.0)
+    train_bench2drive_parser.add_argument("--waypoint-loss-weight", type=float, default=1.0)
+    train_bench2drive_parser.add_argument("--control-loss-weight", type=float, default=0.25)
+    train_bench2drive_parser.add_argument("--brake-loss-weight", type=float, default=0.1)
+    train_bench2drive_parser.add_argument("--brake-positive-weight", type=float, default=1.0)
+    train_bench2drive_parser.add_argument("--risk-sample-weight", type=float, default=1.0)
+    train_bench2drive_parser.add_argument("--lateral-loss-weight", type=float, default=1.0)
+    train_bench2drive_parser.add_argument("--turn-sample-weight", type=float, default=1.0)
+    train_bench2drive_parser.add_argument("--turn-lateral-threshold-m", type=float, default=2.0)
+    train_bench2drive_parser.add_argument("--mode-classification-weight", type=float, default=0.05)
+    train_bench2drive_parser.add_argument(
+        "--selection-metric",
+        choices=["ade_m", "fde_m", "brake_f1", "risk_aware", "lateral_aware"],
+        default="ade_m",
+    )
+    train_bench2drive_parser.add_argument("--max-train-samples", type=int, default=0)
+    train_bench2drive_parser.add_argument("--max-val-samples", type=int, default=0)
+    train_bench2drive_parser.add_argument("--num-workers", type=int, default=4)
+    train_bench2drive_parser.add_argument("--prefetch-factor", type=int, default=4)
+    train_bench2drive_parser.add_argument("--device", default="")
+    train_bench2drive_parser.add_argument("--no-data-parallel", action="store_true")
+    train_bench2drive_parser.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
+    train_bench2drive_parser.add_argument("--disable-tf32", action="store_true")
+    train_bench2drive_parser.add_argument("--disable-cudnn-benchmark", action="store_true")
+    train_bench2drive_parser.add_argument("--nonfinite-check-interval", type=int, default=0)
+    train_bench2drive_parser.add_argument("--seed", type=int, default=7)
+    train_bench2drive_parser.add_argument("--verbose", action="store_true")
+
+    eval_bench2drive_parser = subparsers.add_parser(
+        "evaluate-bench2drive-vision-planner",
+        help="Evaluate a Bench2Drive vision planner checkpoint.",
+    )
+    eval_bench2drive_parser.add_argument("--manifest", default=str(DEFAULT_BENCH2DRIVE_MANIFEST))
+    eval_bench2drive_parser.add_argument(
+        "--checkpoint",
+        default=str(DEFAULT_BENCH2DRIVE_OUTPUT / "vision_e2e_planner_best.pt"),
+    )
+    eval_bench2drive_parser.add_argument("--output", default=str(DEFAULT_BENCH2DRIVE_OUTPUT / "eval"))
+    eval_bench2drive_parser.add_argument("--split", choices=["train", "val", "all"], default="val")
+    eval_bench2drive_parser.add_argument("--batch-size", type=int, default=32)
+    eval_bench2drive_parser.add_argument("--image-size", type=int, default=160)
+    eval_bench2drive_parser.add_argument("--max-samples", type=int, default=0)
+    eval_bench2drive_parser.add_argument("--num-workers", type=int, default=4)
+    eval_bench2drive_parser.add_argument("--prefetch-factor", type=int, default=4)
+    eval_bench2drive_parser.add_argument("--device", default="")
+
+    diagnose_bench2drive_parser = subparsers.add_parser(
+        "diagnose-bench2drive-vision-planner",
+        help="Analyze Bench2Drive vision planner predictions for closed-loop transfer readiness.",
+    )
+    diagnose_bench2drive_parser.add_argument(
+        "--predictions",
+        default=str(DEFAULT_BENCH2DRIVE_OUTPUT / "eval" / "predictions.jsonl"),
+    )
+    diagnose_bench2drive_parser.add_argument("--output", default=str(DEFAULT_BENCH2DRIVE_OUTPUT / "diagnostics"))
+    diagnose_bench2drive_parser.add_argument("--evaluation-report", default="")
+    diagnose_bench2drive_parser.add_argument("--brake-threshold", type=float, default=0.5)
+
+    bench2drive_closed_loop_parser = subparsers.add_parser(
+        "run-bench2drive-vision-closed-loop",
+        help="Run model-in-the-loop closed-loop evaluation for the Bench2Drive vision planner.",
+    )
+    bench2drive_closed_loop_parser.add_argument("--manifest", default=str(DEFAULT_BENCH2DRIVE_TENSOR_MANIFEST))
+    bench2drive_closed_loop_parser.add_argument(
+        "--checkpoint",
+        default=str(DEFAULT_BENCH2DRIVE_OUTPUT / "vision_e2e_planner_best.pt"),
+    )
+    bench2drive_closed_loop_parser.add_argument("--output", default=str(DEFAULT_BENCH2DRIVE_CLOSED_LOOP_OUTPUT))
+    bench2drive_closed_loop_parser.add_argument("--split", choices=["train", "val", "all"], default="val")
+    bench2drive_closed_loop_parser.add_argument("--max-cases", type=int, default=64)
+    bench2drive_closed_loop_parser.add_argument("--max-frames-per-clip", type=int, default=20)
+    bench2drive_closed_loop_parser.add_argument("--image-size", type=int, default=160)
+    bench2drive_closed_loop_parser.add_argument("--device", default="")
+    bench2drive_closed_loop_parser.add_argument("--video-fps", type=int, default=6)
+    bench2drive_closed_loop_parser.add_argument(
+        "--case-selection",
+        choices=["balanced", "qualitative", "stress"],
+        default="balanced",
+    )
+    bench2drive_closed_loop_parser.add_argument("--dt-s", type=float, default=0.5)
+    bench2drive_closed_loop_parser.add_argument("--horizon-s", type=float, default=10.0)
+    bench2drive_closed_loop_parser.add_argument("--target-speed-mps", type=float, default=5.5)
+    bench2drive_closed_loop_parser.add_argument("--brake-threshold", type=float, default=0.85)
+    bench2drive_closed_loop_parser.add_argument("--lookahead-m", type=float, default=9.0)
+    bench2drive_closed_loop_parser.add_argument("--speed-kp", type=float, default=0.45)
+
+    inspect_carla_parser = subparsers.add_parser(
+        "inspect-carla",
+        help="Inspect the local CARLA runtime and PythonAPI readiness.",
+    )
+    inspect_carla_parser.add_argument("--carla-root", default=str(DEFAULT_CARLA_ROOT))
+
+    carla_launch_parser = subparsers.add_parser(
+        "print-carla-launch-command",
+        help="Print a headless CARLA server launch command.",
+    )
+    carla_launch_parser.add_argument("--carla-root", default=str(DEFAULT_CARLA_ROOT))
+    carla_launch_parser.add_argument("--port", type=int, default=2000)
+    carla_launch_parser.add_argument("--quality-level", default="Low")
+    carla_launch_parser.add_argument("--fps", type=int, default=20)
+    carla_launch_parser.add_argument("--cuda-visible-devices", default="")
+    carla_launch_parser.add_argument("--null-rhi", action="store_true")
+    carla_launch_parser.add_argument("--no-render-offscreen", action="store_true")
+
+    carla_smoke_parser = subparsers.add_parser(
+        "carla-connection-smoke",
+        help="Connect to a running CARLA server and report map/spawn-point metadata.",
+    )
+    carla_smoke_parser.add_argument("--carla-root", default=str(DEFAULT_CARLA_ROOT))
+    carla_smoke_parser.add_argument("--host", default="127.0.0.1")
+    carla_smoke_parser.add_argument("--port", type=int, default=2000)
+    carla_smoke_parser.add_argument("--timeout-s", type=float, default=10.0)
+    carla_smoke_parser.add_argument("--town", default="")
+    carla_smoke_parser.add_argument("--load-town", action="store_true")
+
+    carla_vision_parser = subparsers.add_parser(
+        "run-carla-vision-closed-loop",
+        help="Run a CARLA camera-stream closed-loop rollout with the Bench2Drive vision planner.",
+    )
+    carla_vision_parser.add_argument("--carla-root", default=str(DEFAULT_CARLA_ROOT))
+    carla_vision_parser.add_argument(
+        "--checkpoint",
+        default=str(DEFAULT_BENCH2DRIVE_OUTPUT / "vision_e2e_planner_best.pt"),
+    )
+    carla_vision_parser.add_argument("--output", default=str(DEFAULT_CARLA_VISION_OUTPUT))
+    carla_vision_parser.add_argument("--host", default="127.0.0.1")
+    carla_vision_parser.add_argument("--port", type=int, default=2000)
+    carla_vision_parser.add_argument("--town", default="")
+    carla_vision_parser.add_argument("--spawn-index", type=int, default=0)
+    carla_vision_parser.add_argument("--destination-index", type=int, default=-1)
+    carla_vision_parser.add_argument("--route-sampling-resolution-m", type=float, default=2.0)
+    carla_vision_parser.add_argument("--route-min-length-m", type=float, default=40.0)
+    carla_vision_parser.add_argument("--route-max-length-m", type=float, default=220.0)
+    carla_vision_parser.add_argument("--route-preferred-length-m", type=float, default=0.0)
+    carla_vision_parser.add_argument("--fps", type=int, default=10)
+    carla_vision_parser.add_argument("--horizon-s", type=float, default=30.0)
+    carla_vision_parser.add_argument("--image-size", type=int, default=160)
+    carla_vision_parser.add_argument("--camera-width", type=int, default=320)
+    carla_vision_parser.add_argument("--camera-height", type=int, default=180)
+    carla_vision_parser.add_argument("--video-width", type=int, default=0)
+    carla_vision_parser.add_argument("--video-height", type=int, default=0)
+    carla_vision_parser.add_argument("--carla-quality-level", default="Epic")
+    carla_vision_parser.add_argument("--scenario-type", default="free_drive")
+    carla_vision_parser.add_argument("--scenario-name", default="")
+    carla_vision_parser.add_argument("--target-speed-mps", type=float, default=7.0)
+    carla_vision_parser.add_argument("--brake-threshold", type=float, default=0.75)
+    carla_vision_parser.add_argument("--no-scenario-safety-override", action="store_true")
+    carla_vision_parser.add_argument("--no-lane-departure-guard", action="store_true")
+    carla_vision_parser.add_argument("--condition-ego-route-traffic-lights", action="store_true")
+    carla_vision_parser.add_argument("--device", default="")
+    carla_vision_parser.add_argument("--auto-launch", action="store_true")
+    carla_vision_parser.add_argument("--cuda-visible-devices", default="")
+    carla_vision_parser.add_argument("--traffic-manager-port", type=int, default=8000)
+    carla_vision_parser.add_argument("--launch-timeout-s", type=float, default=90.0)
+    carla_vision_parser.add_argument("--rpc-timeout-s", type=float, default=30.0)
+    carla_vision_parser.add_argument("--keep-server", action="store_true")
+    carla_vision_parser.add_argument("--video-fps", type=int, default=10)
+    carla_vision_parser.add_argument("--video-encoder", default="hevc_nvenc")
+    carla_vision_parser.add_argument("--video-nvenc-preset", default="p4")
+    carla_vision_parser.add_argument("--video-quality", type=int, default=23)
+
+    carla_semantic_demo_parser = subparsers.add_parser(
+        "mine-carla-semantic-demos",
+        help="Search CARLA routes and keep only semantic-audit-passing vision closed-loop demos.",
+    )
+    carla_semantic_demo_parser.add_argument("--carla-root", default=str(DEFAULT_CARLA_ROOT))
+    carla_semantic_demo_parser.add_argument(
+        "--checkpoint",
+        default=str(DEFAULT_BENCH2DRIVE_OUTPUT / "vision_e2e_planner_best.pt"),
+    )
+    carla_semantic_demo_parser.add_argument("--output", default=str(DEFAULT_CARLA_SEMANTIC_DEMO_OUTPUT))
+    carla_semantic_demo_parser.add_argument("--trials-output", default=str(DEFAULT_CARLA_SEMANTIC_DEMO_TRIALS_OUTPUT))
+    carla_semantic_demo_parser.add_argument("--host", default="127.0.0.1")
+    carla_semantic_demo_parser.add_argument("--port-start", type=int, default=2040)
+    carla_semantic_demo_parser.add_argument("--town", default="Town10HD_Opt")
+    carla_semantic_demo_parser.add_argument("--fps", type=int, default=10)
+    carla_semantic_demo_parser.add_argument("--horizon-s", type=float, default=18.0)
+    carla_semantic_demo_parser.add_argument("--image-size", type=int, default=160)
+    carla_semantic_demo_parser.add_argument("--camera-width", type=int, default=640)
+    carla_semantic_demo_parser.add_argument("--camera-height", type=int, default=360)
+    carla_semantic_demo_parser.add_argument("--video-width", type=int, default=1920)
+    carla_semantic_demo_parser.add_argument("--video-height", type=int, default=1080)
+    carla_semantic_demo_parser.add_argument("--carla-quality-level", default="Epic")
+    carla_semantic_demo_parser.add_argument("--brake-threshold", type=float, default=0.82)
+    carla_semantic_demo_parser.add_argument("--device", default="cuda")
+    carla_semantic_demo_parser.add_argument("--no-auto-launch", action="store_true")
+    carla_semantic_demo_parser.add_argument("--cuda-visible-devices", default="")
+    carla_semantic_demo_parser.add_argument("--traffic-manager-port-start", type=int, default=8040)
+    carla_semantic_demo_parser.add_argument("--launch-timeout-s", type=float, default=180.0)
+    carla_semantic_demo_parser.add_argument("--rpc-timeout-s", type=float, default=90.0)
+    carla_semantic_demo_parser.add_argument("--keep-server", action="store_true")
+    carla_semantic_demo_parser.add_argument("--no-reuse-carla-server", action="store_true")
+    carla_semantic_demo_parser.add_argument("--video-fps", type=int, default=10)
+    carla_semantic_demo_parser.add_argument("--video-encoder", default="hevc_nvenc")
+    carla_semantic_demo_parser.add_argument("--video-nvenc-preset", default="p4")
+    carla_semantic_demo_parser.add_argument("--video-quality", type=int, default=23)
+    carla_semantic_demo_parser.add_argument("--no-scenario-safety-override", action="store_true")
+    carla_semantic_demo_parser.add_argument("--enable-lane-departure-guard", action="store_true")
+    carla_semantic_demo_parser.add_argument("--no-condition-ego-route-traffic-lights", action="store_true")
+    carla_semantic_demo_parser.add_argument("--max-attempts-per-target", type=int, default=4)
+
+    carla_audit_parser = subparsers.add_parser(
+        "audit-carla-vision-rollout",
+        help="Audit generated CARLA vision rollout videos and control evidence.",
+    )
+    carla_audit_parser.add_argument(
+        "--report",
+        default="outputs/carla_semantic_demo_trajectory_transformer_final/carla_semantic_demo_report.json",
+    )
+    carla_audit_parser.add_argument("--output", default="")
+    carla_audit_parser.add_argument("--min-resolution-width", type=int, default=1920)
+    carla_audit_parser.add_argument("--min-resolution-height", type=int, default=1080)
+    carla_audit_parser.add_argument("--min-fps", type=float, default=8.0)
+    carla_audit_parser.add_argument("--min-frames", type=int, default=80)
+    carla_audit_parser.add_argument("--min-traffic-manager-vehicles", type=int, default=1)
+    carla_audit_parser.add_argument("--max-scripted-vehicles", type=int, default=0)
+    carla_audit_parser.add_argument("--max-collision-count", type=int, default=0)
+    carla_audit_parser.add_argument("--min-route-completion", type=float, default=0.05)
+    carla_audit_parser.add_argument("--max-mean-lateral-error-m", type=float, default=2.5)
+    carla_audit_parser.add_argument("--max-lateral-error-m", type=float, default=6.0)
+    carla_audit_parser.add_argument("--max-safety-override-ratio", type=float, default=0.35)
+    carla_audit_parser.add_argument("--max-nearest-actor-distance-m", type=float, default=60.0)
+    carla_audit_parser.add_argument("--nearby-actor-distance-m", type=float, default=30.0)
+    carla_audit_parser.add_argument("--min-nearby-actor-ratio", type=float, default=0.30)
+    carla_audit_parser.add_argument("--require-semantic-match", action="store_true")
+    carla_audit_parser.add_argument("--allow-non-model-control", action="store_true")
+
     compare_nuplan_replay_parser = subparsers.add_parser(
         "compare-nuplan-replay-evaluations",
         help="Compare multiple nuPlan replay evaluation output directories.",
@@ -678,7 +1004,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     full_suite_parser = subparsers.add_parser(
         "run-full-benchmark-suite",
-        help="Run the end-to-end benchmark suite config.",
+        help="Run the full benchmark suite config.",
     )
     full_suite_parser.add_argument("--config", default="configs/full_benchmark_suite.yaml")
 
@@ -1470,6 +1796,302 @@ def main() -> None:
         print(json.dumps(manifest["comparison"]["overview"], indent=2, ensure_ascii=False))
         return
 
+    if args.command == "inspect-bench2drive":
+        inventory = inspect_bench2drive_dataset(
+            dataset_root=Path(args.dataset_root),
+            sample_archives=args.sample_archives,
+        )
+        print(json.dumps(inventory, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "build-bench2drive-vision-manifest":
+        metadata = build_bench2drive_vision_manifest(
+            dataset_root=Path(args.dataset_root),
+            output_path=Path(args.output),
+            max_archives=args.max_archives,
+            frame_stride=args.frame_stride,
+            future_steps=args.future_steps,
+            future_frame_stride=args.future_frame_stride,
+            train_fraction=args.train_fraction,
+            seed=args.seed,
+            cache_root=None if args.no_cache else Path(args.cache_root),
+            verbose=bool(args.verbose),
+        )
+        print("Bench2Drive vision manifest:", Path(args.output).resolve())
+        print(json.dumps({k: metadata[k] for k in ["archive_count", "row_count", "split_counts"]}, indent=2))
+        return
+
+    if args.command == "build-bench2drive-vision-tensor-cache":
+        metadata = build_bench2drive_vision_tensor_cache(
+            manifest_path=Path(args.manifest),
+            output_manifest_path=Path(args.output),
+            cache_dir=Path(args.cache_dir),
+            image_size=args.image_size,
+            max_rows=args.max_rows,
+            num_workers=args.num_workers,
+            chunk_rows=args.chunk_rows,
+            verbose=bool(args.verbose),
+        )
+        print("Bench2Drive vision tensor manifest:", Path(args.output).resolve())
+        print(json.dumps({k: metadata[k] for k in ["row_count", "invalid_sample_count", "split_counts"]}, indent=2))
+        return
+
+    if args.command == "train-bench2drive-vision-planner":
+        report = train_vision_e2e_planner(
+            manifest_path=Path(args.manifest),
+            output_dir=Path(args.output),
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            learning_rate=args.learning_rate,
+            weight_decay=args.weight_decay,
+            image_size=args.image_size,
+            model_size=args.model_size,
+            architecture=args.architecture,
+            camera_pooling=args.camera_pooling,
+            dropout=args.dropout,
+            trajectory_modes=args.trajectory_modes,
+            trajectory_selection=args.trajectory_selection,
+            trajectory_top_k=args.trajectory_top_k,
+            trajectory_temperature=args.trajectory_temperature,
+            waypoint_loss_weight=args.waypoint_loss_weight,
+            control_loss_weight=args.control_loss_weight,
+            brake_loss_weight=args.brake_loss_weight,
+            brake_positive_weight=args.brake_positive_weight,
+            risk_sample_weight=args.risk_sample_weight,
+            lateral_loss_weight=args.lateral_loss_weight,
+            turn_sample_weight=args.turn_sample_weight,
+            turn_lateral_threshold_m=args.turn_lateral_threshold_m,
+            mode_classification_weight=args.mode_classification_weight,
+            selection_metric=args.selection_metric,
+            max_train_samples=args.max_train_samples,
+            max_val_samples=args.max_val_samples,
+            num_workers=args.num_workers,
+            prefetch_factor=args.prefetch_factor,
+            device=args.device,
+            use_data_parallel=not bool(args.no_data_parallel),
+            precision=args.precision,
+            allow_tf32=not bool(args.disable_tf32),
+            cudnn_benchmark=not bool(args.disable_cudnn_benchmark),
+            nonfinite_check_interval=args.nonfinite_check_interval,
+            seed=args.seed,
+            verbose=bool(args.verbose),
+        )
+        if bool(report.get("is_main_process", _is_main_process())):
+            print("Bench2Drive vision planner checkpoint:", Path(report["checkpoint_path"]).resolve())
+            print(
+                json.dumps(
+                    {"train_samples": report["train_sample_count"], "val_samples": report["val_sample_count"]},
+                    indent=2,
+                )
+            )
+        return
+
+    if args.command == "evaluate-bench2drive-vision-planner":
+        report = evaluate_vision_e2e_planner(
+            manifest_path=Path(args.manifest),
+            checkpoint_path=Path(args.checkpoint),
+            output_dir=Path(args.output),
+            split=args.split,
+            batch_size=args.batch_size,
+            image_size=args.image_size,
+            max_samples=args.max_samples,
+            num_workers=args.num_workers,
+            prefetch_factor=args.prefetch_factor,
+            device=args.device,
+        )
+        print("Bench2Drive vision planner evaluation:", Path(args.output).resolve())
+        print(json.dumps(report["metrics"], indent=2))
+        return
+
+    if args.command == "diagnose-bench2drive-vision-planner":
+        report = diagnose_vision_e2e_predictions(
+            predictions_path=Path(args.predictions),
+            output_dir=Path(args.output),
+            evaluation_report_path=Path(args.evaluation_report) if args.evaluation_report else None,
+            brake_threshold=args.brake_threshold,
+        )
+        print("Bench2Drive vision planner diagnostics:", Path(args.output).resolve())
+        print(json.dumps(report["readiness"], indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "run-bench2drive-vision-closed-loop":
+        report = run_bench2drive_vision_closed_loop(
+            manifest_path=Path(args.manifest),
+            checkpoint_path=Path(args.checkpoint),
+            output_dir=Path(args.output),
+            split=args.split,
+            max_cases=args.max_cases,
+            max_frames_per_clip=args.max_frames_per_clip,
+            image_size=args.image_size,
+            device=args.device,
+            video_fps=args.video_fps,
+            case_selection=args.case_selection,
+            control_config=ClosedLoopControlConfig(
+                dt_s=args.dt_s,
+                horizon_s=args.horizon_s,
+                target_speed_mps=args.target_speed_mps,
+                brake_probability_threshold=args.brake_threshold,
+                lookahead_m=args.lookahead_m,
+                speed_kp=args.speed_kp,
+            ),
+        )
+        print("Bench2Drive vision closed-loop evaluation:", Path(args.output).resolve())
+        print(json.dumps(report["comparison"], indent=2))
+        return
+
+    if args.command == "inspect-carla":
+        inventory = inspect_carla_runtime(carla_root=Path(args.carla_root))
+        print(json.dumps(inventory, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "print-carla-launch-command":
+        command = build_carla_launch_command(
+            carla_root=Path(args.carla_root),
+            render_offscreen=not bool(args.no_render_offscreen),
+            null_rhi=bool(args.null_rhi),
+            port=args.port,
+            quality_level=args.quality_level,
+            fps=args.fps,
+        )
+        print(format_carla_launch_command(command, cuda_visible_devices=args.cuda_visible_devices))
+        return
+
+    if args.command == "carla-connection-smoke":
+        result = run_carla_connection_smoke(
+            carla_root=Path(args.carla_root),
+            host=args.host,
+            port=args.port,
+            timeout_s=args.timeout_s,
+            town=args.town,
+            load_town=args.load_town,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "run-carla-vision-closed-loop":
+        report = run_carla_vision_closed_loop(
+            carla_root=Path(args.carla_root),
+            checkpoint_path=Path(args.checkpoint),
+            output_dir=Path(args.output),
+            host=args.host,
+            port=args.port,
+            town=args.town,
+            spawn_index=args.spawn_index,
+            destination_index=args.destination_index,
+            route_sampling_resolution_m=args.route_sampling_resolution_m,
+            route_min_length_m=args.route_min_length_m,
+            route_max_length_m=args.route_max_length_m,
+            route_preferred_length_m=args.route_preferred_length_m,
+            fps=args.fps,
+            horizon_s=args.horizon_s,
+            image_size=args.image_size,
+            camera_width=args.camera_width,
+            camera_height=args.camera_height,
+            video_width=args.video_width,
+            video_height=args.video_height,
+            carla_quality_level=args.carla_quality_level,
+            scenario_type=args.scenario_type,
+            scenario_name=args.scenario_name,
+            target_speed_mps=args.target_speed_mps,
+            brake_probability_threshold=args.brake_threshold,
+            enable_scenario_safety_override=not bool(args.no_scenario_safety_override),
+            enable_lane_departure_guard=not bool(args.no_lane_departure_guard),
+            condition_ego_route_traffic_lights=bool(args.condition_ego_route_traffic_lights),
+            device=args.device,
+            auto_launch=bool(args.auto_launch),
+            cuda_visible_devices=args.cuda_visible_devices,
+            traffic_manager_port=args.traffic_manager_port,
+            launch_timeout_s=args.launch_timeout_s,
+            rpc_timeout_s=args.rpc_timeout_s,
+            keep_server=bool(args.keep_server),
+            video_fps=args.video_fps,
+            video_encoder=args.video_encoder,
+            video_nvenc_preset=args.video_nvenc_preset,
+            video_quality=args.video_quality,
+        )
+        print("CARLA vision closed-loop rollout:", Path(args.output).resolve())
+        print(json.dumps(report["metrics"], indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "mine-carla-semantic-demos":
+        report = mine_carla_semantic_demos(
+            carla_root=Path(args.carla_root),
+            checkpoint_path=Path(args.checkpoint),
+            output_dir=Path(args.output),
+            trials_output_dir=Path(args.trials_output),
+            host=args.host,
+            port_start=args.port_start,
+            town=args.town,
+            fps=args.fps,
+            horizon_s=args.horizon_s,
+            image_size=args.image_size,
+            camera_width=args.camera_width,
+            camera_height=args.camera_height,
+            video_width=args.video_width,
+            video_height=args.video_height,
+            carla_quality_level=args.carla_quality_level,
+            brake_probability_threshold=args.brake_threshold,
+            device=args.device,
+            auto_launch=not bool(args.no_auto_launch),
+            cuda_visible_devices=args.cuda_visible_devices,
+            traffic_manager_port_start=args.traffic_manager_port_start,
+            launch_timeout_s=args.launch_timeout_s,
+            rpc_timeout_s=args.rpc_timeout_s,
+            keep_server=bool(args.keep_server),
+            video_fps=args.video_fps,
+            video_encoder=args.video_encoder,
+            video_nvenc_preset=args.video_nvenc_preset,
+            video_quality=args.video_quality,
+            enable_scenario_safety_override=not bool(args.no_scenario_safety_override),
+            enable_lane_departure_guard=bool(args.enable_lane_departure_guard),
+            condition_ego_route_traffic_lights=not bool(args.no_condition_ego_route_traffic_lights),
+            max_attempts_per_target=args.max_attempts_per_target,
+        )
+        print("CARLA semantic demo mining:", Path(args.output).resolve())
+        print(
+            json.dumps(
+                {
+                    "status": report.get("status"),
+                    "passed_target_count": report.get("passed_target_count"),
+                    "target_count": report.get("target_count"),
+                    "attempt_count": report.get("attempt_count"),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
+
+    if args.command == "audit-carla-vision-rollout":
+        report = audit_carla_vision_rollouts(
+            report_path=Path(args.report),
+            output_path=Path(args.output) if args.output else None,
+            min_resolution_width=args.min_resolution_width,
+            min_resolution_height=args.min_resolution_height,
+            min_fps=args.min_fps,
+            min_frames=args.min_frames,
+            min_traffic_manager_vehicles=args.min_traffic_manager_vehicles,
+            max_scripted_vehicles=args.max_scripted_vehicles,
+            max_collision_count=args.max_collision_count,
+            min_route_completion=args.min_route_completion,
+            max_mean_lateral_error_m=args.max_mean_lateral_error_m,
+            max_lateral_error_m=args.max_lateral_error_m,
+            max_safety_override_ratio=args.max_safety_override_ratio,
+            max_nearest_actor_distance_m=args.max_nearest_actor_distance_m,
+            nearby_actor_distance_m=args.nearby_actor_distance_m,
+            min_nearby_actor_ratio=args.min_nearby_actor_ratio,
+            require_semantic_match=bool(args.require_semantic_match),
+            require_model_control=not bool(args.allow_non_model_control),
+        )
+        default_audit_name = (
+            "carla_semantic_demo_audit.json"
+            if Path(args.report).name == "carla_semantic_demo_report.json"
+            else "carla_vision_video_audit.json"
+        )
+        print("CARLA vision rollout audit:", Path(args.output or Path(args.report).with_name(default_audit_name)).resolve())
+        print(json.dumps({k: report[k] for k in ["status", "failure_count", "warning_count", "summary"]}, indent=2))
+        return
+
     if args.command == "compare-nuplan-replay-evaluations":
         comparison = compare_nuplan_replay_evaluations(
             evaluation_dirs=[Path(path) for path in args.eval_dir],
@@ -1692,6 +2314,10 @@ def main() -> None:
             )
         print(json.dumps(metadata, indent=2, ensure_ascii=False))
         return
+
+
+def _is_main_process() -> bool:
+    return int(os.environ.get("RANK") or "0") == 0
 
 
 if __name__ == "__main__":

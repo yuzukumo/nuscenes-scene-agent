@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nuscenes-scene-agent"
 version = "0.1.0"
-description = "Toolkit for natural-language scene retrieval, validation, benchmark generation, and replay regression on nuScenes and nuPlan."
+description = "Risk-scenario mining, benchmark generation, and model-in-the-loop evaluation for autonomous driving."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
-keywords = ["nuScenes", "nuPlan", "autonomous driving", "scene mining", "risk retrieval", "benchmark generation", "replay regression", "corner case mining"]
+keywords = ["nuScenes", "nuPlan", "CARLA", "Bench2Drive", "autonomous driving", "risk scene", "scene mining", "benchmark generation", "model-in-the-loop", "corner case mining"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "License :: OSI Approved :: MIT License",
@@ -17,6 +17,7 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: Scientific/Engineering :: Information Analysis",
   "Topic :: Scientific/Engineering :: Visualization",
@@ -45,6 +46,12 @@ forecast = [
   "torch>=2.5",
   "torchvision>=0.20",
   "scikit-learn>=1.3",
+]
+vision = [
+  "torch>=2.5",
+  "torchvision>=0.20",
+  "Pillow>=8",
+  "imageio>=2.30",
 ]
 ros = [
   "mcap>=1.1",

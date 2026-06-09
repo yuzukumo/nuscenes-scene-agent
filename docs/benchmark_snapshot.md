@@ -1,6 +1,8 @@
 # Benchmark Snapshot Notes
 
-Generated outputs are kept local by default. This document records the benchmark scale, metric boundaries, and representative local results used by the repository.
+Generated outputs are excluded from version control by default. This document records benchmark scale, metric boundaries, and representative local results.
+
+The benchmark stack is scenario-centric. `nuScenes`, `nuPlan`, `Bench2Drive`, and `CARLA` are connected through the shared taxonomy in [configs/scenario_taxonomy.yaml](../configs/scenario_taxonomy.yaml). `nuScenes` anchors define and validate real-world risk semantics; `nuPlan` evaluates logged replay behavior; `Bench2Drive` trains and diagnoses a vision trajectory planner; `CARLA` provides semantically matched closed-loop visual evidence.
 
 ## Benchmark Scale
 
@@ -11,6 +13,9 @@ Generated outputs are kept local by default. This document records the benchmark
 | `nuScenes` perception, BEV occupancy, and world-model slices | `24` anchors | `24` cases per layer | derived from scenario-mining anchors |
 | `nuPlan` cross-split replay sweep | `1556` candidate anchors | `112` replay cases | controlled by per-study caps |
 | `nuPlan` cross-split closed-loop replay sweep | `1556` candidate anchors | `112` replay-simulation cases | uses the same scenario sampling as replay regression |
+| `Bench2Drive` vision planner | `44,940` cached samples | `4,717` validation samples | multi-camera vision imitation training |
+| `Bench2Drive` vision closed-loop | `44,940` cached samples | `64` closed-loop cases | model-in-the-loop rollout with vehicle dynamics |
+| `CARLA` semantic demo mining | `1` configured target class | audit-gated | model-waypoint ego control with Traffic Manager ambient vehicles and semantic evidence checks |
 
 The committed benchmark slices use sampling caps over validated mined cases. `nuScenes` reference labels are weak-supervised anchors derived from the validated case library, including scene identity, actor identity, event-window range, and peak sample.
 
@@ -35,6 +40,10 @@ World-model metrics evaluate future trajectory and sparse future occupancy: ADE,
 `nuPlan` replay-regression metrics compare predicted ego rollouts with logged replay windows: ego ADE/FDE, minimum-distance error, minimum-TTC error, red-light context recall, comfort-target errors, collision-proxy mismatch, and risk fidelity.
 
 `nuPlan` closed-loop replay metrics roll the ego state forward with planner profiles while replaying logged actors and traffic-light context. Reported metrics include ego ADE/FDE, minimum-distance error, minimum-TTC error, progress ratio, collision-proxy mismatch, comfort violations, closed-loop drift, and closed-loop score.
+
+Bench2Drive vision-planner metrics evaluate supervised ego-trajectory prediction from six camera views and route features. Reported metrics include waypoint ADE/FDE, control loss, brake accuracy, and training throughput. The closed-loop layer rolls the trained model forward in a waypoint-control bicycle-model simulation; reported metrics include closed-loop ADE/FDE, route completion, lateral error, and closed-loop score.
+
+CARLA semantic demo mining evaluates the trained multi-camera planner in synchronous urban rollouts selected from the shared scenario taxonomy. Ego control follows model-predicted waypoints through a low-level vehicle controller, with optional safety-brake override. CARLA Traffic Manager controls ambient vehicles. A rollout is retained as a semantic demo only if video, control-attribution, traffic-context, and scenario-specific evidence checks pass.
 
 Proxy profiles are controlled perturbations for sensitivity analysis. External baselines are evaluated through adapter interfaces for official `nuScenes` prediction files, forecast outputs, and `ContextVAE`.
 
@@ -150,6 +159,123 @@ Study coverage:
 | `train_pittsburgh_sample` | 128 | 294 | 24 |
 | `train_singapore_sample` | 128 | 250 | 24 |
 
+## Bench2Drive Vision Planner
+
+Dataset and cache:
+
+| Quantity | Value |
+| --- | ---: |
+| Source archives | 1,000 |
+| Manifest rows after finite-value filtering | 44,940 |
+| Train samples | 40,223 |
+| Validation samples | 4,717 |
+| Cameras | 6 |
+| Tensor cache image size | 160 x 160 |
+| Tensor cache size | 20 GB |
+
+Training configuration:
+
+| Quantity | Value |
+| --- | --- |
+| Model | `research` trajectory transformer |
+| Input | six camera views and route features |
+| Target | future ego waypoints, control values, brake state |
+| Training | `8`-GPU distributed data parallel |
+| Per-GPU batch size | 64 |
+| Epochs | 24 |
+| Precision | `fp16`; TF32 and cuDNN benchmark enabled |
+| Runtime | 315.983 seconds |
+| Trajectory modes | 4 |
+| Trajectory selection | expected mixture over mode probabilities |
+| Trajectory temperature | 0.5 |
+
+Independent validation:
+
+| Metric | Value |
+| --- | ---: |
+| ADE | 1.599 |
+| FDE | 2.625 |
+| Lateral MAE | 0.561 m |
+| Turn lateral MAE | 0.830 m |
+| Brake accuracy | 0.903 |
+| Brake F1 | 0.884 |
+| Oracle ADE over trajectory modes | 0.937 |
+| Oracle FDE over trajectory modes | 1.239 |
+
+Trajectory-selection ablation:
+
+| Model | ADE | FDE | Brake F1 |
+| --- | ---: | ---: | ---: |
+| `trajectory_transformer_argmax` | 1.709 | 2.790 | 0.886 |
+| `trajectory_transformer_topk_expected` | 1.631 | 2.684 | 0.886 |
+| `trajectory_transformer_expected_t0.5` | 1.599 | 2.625 | 0.884 |
+
+Planner diagnostic summary:
+
+| Metric | Value |
+| --- | ---: |
+| Samples | 4,717 |
+| Underreach rate | 0.389 |
+| Severe underreach rate | 0.329 |
+| Near-stop prediction rate | 0.205 |
+| Mean lateral error | 0.561 m |
+| Predicted-to-target speed ratio | 0.887 |
+| Brake F1 | 0.884 |
+| Diagnostic status | `requires_planner_improvement_before_carla_rollout` |
+
+The diagnostic flag is caused by conservative horizon length on part of the validation set. The CARLA stage therefore uses semantic audit gates and reports safety-override attribution instead of treating supervised ADE/FDE as sufficient closed-loop evidence.
+
+Model-in-the-loop closed-loop validation:
+
+| Metric | Value |
+| --- | ---: |
+| Cases | 64 |
+| Mean closed-loop ADE | 12.438 |
+| Mean closed-loop FDE | 24.902 |
+| Mean lateral error | 1.332 |
+| Mean route completion | 0.754 |
+| Mean closed-loop score | 0.105 |
+
+The Bench2Drive model-in-the-loop layer is a proxy diagnostic using simplified vehicle dynamics. The CARLA section reports the retained visual rollout evidence.
+
+## CARLA Semantic Demo Mining
+
+The CARLA stage searches route and traffic configurations for an audit-gated right-turn pedestrian-yield target:
+
+| Target | Evidence Gate |
+| --- | --- |
+| `pedestrian_yield` | crosswalk pedestrian actor, ego yield/brake response, no collision |
+
+Only passing attempts are promoted from trial runs to `outputs/carla_semantic_demo_trajectory_transformer_final`. The retained report records MP4 paths, states CSV, route traces, control attribution, and semantic audit status. The README references a curated copy of the retained demo under `assets/`.
+
+Semantic-gated CARLA run:
+
+| Quantity | Value |
+| --- | ---: |
+| Target classes | 1 |
+| Passed target classes | 1 |
+| Attempts | 2 |
+| Retained rollouts | 1 |
+| Total video frames | 267 |
+| Duration | 26.6 s |
+| Traffic Manager vehicles | 13 |
+| Scripted vehicles | 0 |
+| Crosswalk pedestrians | 9 |
+| Collisions | 0 |
+| Semantic audit failures | 0 |
+| Semantic audit warnings | 0 |
+| Direct model-control ratio | 1.000 |
+| Safety override ratio | 0.105 |
+| Mean lateral error | 0.642 m |
+| Route completion | 0.983 |
+| Video | `1920x1080` HEVC MP4 |
+
+Retained rollout media:
+
+| Scenario | Type | Frames | Traffic Manager Vehicles | Scripted Vehicles | Collisions | Video |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| `right_turn_pedestrian_yield` | `pedestrian_crossing` | 267 | 13 | 0 | 0 | `1920x1080` HEVC MP4 |
+
 ## Learned Retrieval And Failure Mining
 
 Weakly supervised learned retrieval:
@@ -203,4 +329,7 @@ Top failure clusters:
 | `risk_benchmark_suite` | `24` scenario anchors, `48` queries, and `24` cases for perception, BEV occupancy, and world-model layers |
 | `nuplan_replay_regression` | `112` replay cases; best non-oracle risk fidelity `0.965` |
 | `nuplan_closed_loop_replay` | `112` replay-simulation cases; best non-oracle closed-loop score `0.950` |
+| `bench2drive_vision_planner` | `44,940` cached samples; temperature-calibrated trajectory-transformer ADE `1.599`; FDE `2.625`; brake F1 `0.884` |
+| `bench2drive_vision_closed_loop` | `64` model-in-the-loop cases; route completion `0.754`; mean lateral error `1.332 m`; closed-loop score `0.105` |
+| `carla_semantic_demo` | `1/1` semantic target passed; `267` frames; `13` Traffic Manager vehicles; `9` crosswalk pedestrians; `0` scripted vehicles; `0` collisions |
 | `failure_mining` | `401` failure records, `83` clusters, and `24` update queries |

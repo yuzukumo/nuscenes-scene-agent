@@ -1,0 +1,140 @@
+schema: scenario_taxonomy_v1
+description: >
+  Shared risk-scenario vocabulary used to align dataset mining, replay
+  evaluation, model training diagnostics, and simulator evidence.
+
+families:
+  - id: vru_crossing
+    canonical_query: pedestrian crossing near the ego path
+    risk_factors:
+      - crosswalk context
+      - ego-path conflict
+      - short time-to-collision
+      - yield or brake response
+    backends:
+      nuscenes:
+        role: mine and validate real-world crossing cases with actor, map, and event-window evidence
+        labels:
+          - crossing
+          - proximity
+      nuplan:
+        role: replay logged ego behavior around VRU-interaction tags
+        labels:
+          - near_pedestrian_on_crosswalk
+          - vru_interaction
+      bench2drive:
+        role: train and evaluate a vision trajectory planner on image-route-control samples that include turning and braking behavior
+        labels:
+          - brake_state
+          - turn_context
+          - risk_weighted_sample
+      carla:
+        role: audit a closed-loop right-turn pedestrian-yield rollout under semantically matched conditions
+        labels:
+          - right_turn_pedestrian_yield
+
+  - id: stopped_lead_vehicle
+    canonical_query: stopped or slow lead vehicle blocking the ego path
+    risk_factors:
+      - low lead speed
+      - same-lane relation
+      - reduced headway
+      - ego deceleration requirement
+    backends:
+      nuscenes:
+        role: mine stopped-lead anchors with relative pose, speed, and lane-relation validation
+        labels:
+          - stopped_lead
+      nuplan:
+        role: replay logged ego response to static-obstacle and lead-vehicle contexts
+        labels:
+          - static_obstacle_context
+          - near_long_vehicle
+      bench2drive:
+        role: evaluate following, braking, and lateral-control errors in model-in-the-loop rollouts
+        labels:
+          - brake_state
+          - route_completion
+      carla:
+        role: reserved semantic target for future closed-loop demo mining
+        labels:
+          - lead_vehicle_yield
+
+  - id: lateral_cut_in
+    canonical_query: adjacent vehicle cuts into the ego lane
+    risk_factors:
+      - adjacent-lane actor
+      - lateral motion toward ego lane
+      - short longitudinal gap
+      - lane-change context
+    backends:
+      nuscenes:
+        role: mine lateral-motion anchors with ego-lane relation and event-window localization
+        labels:
+          - cut_in
+      nuplan:
+        role: replay logged interaction cases involving nearby moving actors
+        labels:
+          - agent_interaction
+      bench2drive:
+        role: evaluate lateral error, steering, and route completion under dense-traffic samples
+        labels:
+          - lateral_error
+          - route_completion
+      carla:
+        role: reserved semantic target for natural Traffic Manager lane-interaction rollouts
+        labels:
+          - adjacent_lane_intrusion
+
+  - id: oncoming_vehicle
+    canonical_query: oncoming vehicle near the ego route
+    risk_factors:
+      - opposite-direction motion
+      - small lateral separation
+      - closing speed
+      - lane or intersection context
+    backends:
+      nuscenes:
+        role: mine opposite-direction actors with relative heading and map-context validation
+        labels:
+          - oncoming
+      nuplan:
+        role: replay interaction windows with high closing-speed risk targets
+        labels:
+          - vehicle_interaction
+      bench2drive:
+        role: evaluate route-conditioned trajectory prediction under urban intersection samples
+        labels:
+          - turn_context
+          - trajectory_mode
+      carla:
+        role: reserved semantic target for intersection and opposing-traffic rollouts
+        labels:
+          - oncoming_interaction
+
+  - id: dense_traffic_following
+    canonical_query: dense traffic around ego with following and merging pressure
+    risk_factors:
+      - multiple nearby actors
+      - front and adjacent-lane occupancy
+      - reduced maneuver margin
+      - route-progress pressure
+    backends:
+      nuscenes:
+        role: mine proximity-heavy anchors with surrounding actor context
+        labels:
+          - proximity
+      nuplan:
+        role: replay multi-agent traffic windows with comfort and progress targets
+        labels:
+          - large_vehicle_interaction
+          - vehicle_interaction
+      bench2drive:
+        role: train and diagnose closed-loop behavior on dense multi-camera driving samples
+        labels:
+          - object_count
+          - closed_loop_score
+      carla:
+        role: provide Traffic Manager ambient vehicles for semantic demo context
+        labels:
+          - natural_traffic_context

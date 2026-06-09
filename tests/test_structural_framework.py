@@ -171,7 +171,28 @@ class StructuralFrameworkTest(unittest.TestCase):
             self.assertTrue(output.exists())
             self.assertIn("nuplan_replay_regression", registry["layers"])
             self.assertIn("nuplan_closed_loop_replay", registry["layers"])
+            self.assertIn("bench2drive_vision_planner", registry["layers"])
+            self.assertIn("bench2drive_vision_closed_loop", registry["layers"])
+            self.assertIn("carla_semantic_demo", registry["layers"])
             self.assertEqual(manifest["overview"]["existing_artifact_count"], 1)
+
+    def test_scenario_taxonomy_aligns_all_backends(self) -> None:
+        import yaml
+
+        taxonomy_path = Path("configs/scenario_taxonomy.yaml")
+        taxonomy = yaml.safe_load(taxonomy_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(taxonomy["schema"], "scenario_taxonomy_v1")
+        self.assertGreaterEqual(len(taxonomy["families"]), 4)
+        required_backends = {"nuscenes", "nuplan", "bench2drive", "carla"}
+        for family in taxonomy["families"]:
+            self.assertTrue(str(family.get("id") or ""))
+            self.assertTrue(str(family.get("canonical_query") or ""))
+            self.assertEqual(set((family.get("backends") or {}).keys()), required_backends)
+            for backend in required_backends:
+                backend_spec = family["backends"][backend]
+                self.assertTrue(str(backend_spec.get("role") or ""))
+                self.assertTrue(list(backend_spec.get("labels") or []))
 
     def test_registry_export_experiment_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -202,6 +223,12 @@ class StructuralFrameworkTest(unittest.TestCase):
             risk_result = root / "risk_result.json"
             replay_summary = root / "nuplan_replay_sweep_summary.json"
             closed_loop_summary = root / "nuplan_closed_loop_sweep_summary.json"
+            bench2drive_training = root / "bench2drive_training_report.json"
+            bench2drive_eval = root / "bench2drive_eval_report.json"
+            bench2drive_diagnostics = root / "planner_diagnostics_report.json"
+            bench2drive_closed_loop = root / "bench2drive_closed_loop_report.json"
+            carla_semantic_demo = root / "carla_semantic_demo_report.json"
+            carla_video_audit = root / "carla_semantic_demo_audit.json"
             failure_report = root / "failure_mining_report.json"
             output_dir = root / "registry"
             risk_result.write_text(
@@ -268,14 +295,174 @@ class StructuralFrameworkTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            bench2drive_training.write_text(
+                json.dumps(
+                    {
+                        "schema": "bench2drive_vision_e2e_training_v1",
+                        "train_sample_count": 10,
+                        "val_sample_count": 4,
+                        "runtime_s": 1.5,
+                        "model_size": "base",
+                        "distributed_world_size": 2,
+                        "precision": "fp32",
+                        "history": [
+                            {
+                                "train": {"samples_per_s": 20.0},
+                                "val": {"ade_m": 1.2, "fde_m": 2.3, "brake_accuracy": 0.75},
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            bench2drive_eval.write_text(
+                json.dumps(
+                    {
+                        "schema": "bench2drive_vision_e2e_eval_v1",
+                        "split": "val",
+                        "sample_count": 4,
+                        "metrics": {"ade_m": 1.1, "fde_m": 2.2, "loss": 0.5, "brake_accuracy": 0.8},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            bench2drive_diagnostics.write_text(
+                json.dumps(
+                    {
+                        "schema": "bench2drive_vision_planner_diagnostics_v1",
+                        "predictions_path": "predictions.jsonl",
+                        "evaluation_report_path": "evaluation_report.json",
+                        "sample_count": 4,
+                        "aggregate": {
+                            "mean_ade_m": 1.1,
+                            "mean_fde_m": 2.2,
+                            "mean_path_length_ratio": 0.85,
+                            "underreach_rate": 0.25,
+                            "severe_underreach_rate": 0.0,
+                            "high_lateral_error_rate": 0.1,
+                            "brake_f1": 0.6,
+                        },
+                        "readiness": {
+                            "status": "requires_planner_improvement_before_carla_rollout",
+                            "findings": ["predicted_horizon_underreach"],
+                            "mean_predicted_to_target_speed_ratio": 0.88,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            bench2drive_closed_loop.write_text(
+                json.dumps(
+                    {
+                        "schema": "bench2drive_vision_closed_loop_v1",
+                        "split": "val",
+                        "case_count": 2,
+                        "checkpoint_path": "checkpoint.pt",
+                        "output_dir": "closed_loop",
+                        "comparison": {
+                            "metrics": {
+                                "mean_closed_loop_ade_m": 3.0,
+                                "mean_closed_loop_fde_m": 5.0,
+                                "mean_mean_lateral_error_m": 0.5,
+                                "mean_route_completion": 0.8,
+                                "mean_closed_loop_score": 0.4,
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            carla_semantic_demo.write_text(
+                json.dumps(
+                    {
+                        "schema": "carla_vision_closed_loop_batch_v1",
+                        "town": "Town10HD_Opt",
+                        "checkpoint_path": "checkpoint.pt",
+                        "output_dir": "carla_semantic_demo",
+                        "scenario_count": 3,
+                        "semantic_targets": [
+                            {"target_id": "pedestrian_yield", "status": "pass"},
+                            {"target_id": "dense_traffic_follow", "status": "pass"},
+                            {"target_id": "adjacent_lane_interaction", "status": "pass"},
+                        ],
+                        "aggregate": {
+                            "total_frames": 720,
+                            "mean_route_completion": 0.343,
+                            "mean_driving_score": 0.333,
+                            "total_collisions": 0,
+                            "total_traffic_manager_vehicles": 14,
+                            "total_scripted_vehicles": 0,
+                            "total_crosswalk_pedestrians": 0,
+                        },
+                        "scenarios": [
+                            {"name": "natural_traffic_straight_cruise"},
+                            {"name": "dense_traffic_follow"},
+                            {"name": "adjacent_lane_interaction"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            carla_video_audit.write_text(
+                json.dumps(
+                    {
+                        "schema": "carla_vision_video_audit_v1",
+                        "report_path": str(carla_semantic_demo),
+                        "status": "pass",
+                        "scenario_count": 3,
+                        "failure_count": 0,
+                        "warning_count": 0,
+                        "failures": [],
+                        "warnings": [],
+                        "summary": {
+                            "passed_scenarios": 3,
+                            "failed_scenarios": 0,
+                            "total_video_frames": 720,
+                            "total_state_rows": 720,
+                            "total_collisions": 0,
+                            "total_traffic_manager_vehicles": 14,
+                            "mean_nearby_actor_ratio": 0.683,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
 
             payload = write_result_registry(
                 output_dir=output_dir,
-                sources=[risk_result, replay_summary, closed_loop_summary, failure_report],
+                sources=[
+                    risk_result,
+                    replay_summary,
+                    closed_loop_summary,
+                    bench2drive_training,
+                    bench2drive_eval,
+                    bench2drive_diagnostics,
+                    bench2drive_closed_loop,
+                    carla_semantic_demo,
+                    carla_video_audit,
+                    failure_report,
+                ],
             )
 
             self.assertEqual(payload["schema"], "benchmark_result_registry_v1")
-            self.assertEqual(payload["overview"]["result_count"], 4)
+            self.assertEqual(payload["overview"]["result_count"], 10)
+            self.assertEqual(payload["overview"]["layer_count"], 7)
+            self.assertIn("bench2drive_vision_planner", {row["layer_id"] for row in payload["results"]})
+            self.assertIn("bench2drive_vision_closed_loop", {row["layer_id"] for row in payload["results"]})
+            self.assertIn("carla_semantic_demo", {row["layer_id"] for row in payload["results"]})
+            diagnostic_entry = next(
+                row
+                for row in payload["results"]
+                if row["schema"] == "bench2drive_vision_planner_diagnostics_v1"
+            )
+            self.assertEqual(diagnostic_entry["metrics"]["underreach_rate"], 0.25)
+            carla_entry = next(row for row in payload["results"] if row["layer_id"] == "carla_semantic_demo")
+            self.assertEqual(carla_entry["metrics"]["total_frames"], 720)
+            self.assertEqual(carla_entry["metrics"]["total_traffic_manager_vehicles"], 14)
+            self.assertEqual(carla_entry["metrics"]["total_scripted_vehicles"], 0)
+            self.assertEqual(carla_entry["metrics"]["total_crosswalk_pedestrians"], 0)
+            audit_entry = next(row for row in payload["results"] if row["schema"] == "carla_vision_video_audit_v1")
+            self.assertEqual(audit_entry["metrics"]["failure_count"], 0)
             self.assertTrue((output_dir / "result_registry.json").exists())
             self.assertTrue((output_dir / "result_registry.csv").exists())
             self.assertTrue((output_dir / "artifact_manifest.json").exists())
