@@ -11,7 +11,7 @@ Scenario-centric risk mining, benchmark generation, replay evaluation, and visio
 </div>
 
 <p align="center">
-  <video src="https://github.com/user-attachments/assets/73f1467c-1bce-4f4a-b5b6-22fafa78e848" controls muted playsinline width="100%"></video>
+  <video src="https://github.com/user-attachments/assets/35027dc0-4da9-4d9e-a70e-91e5aa6d2e8c" controls muted playsinline width="100%"></video>
 </p>
 
 ## Paired Model Comparison
