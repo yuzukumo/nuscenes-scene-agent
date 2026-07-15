@@ -17,21 +17,31 @@ families:
         labels:
           - crossing
           - proximity
+        match:
+          fields: [behaviors, source_query_tags]
+          values: [crossing]
       nuplan:
         role: replay logged ego behavior around VRU-interaction tags
         labels:
           - near_pedestrian_on_crosswalk
           - vru_interaction
+        match:
+          fields: [scenario_tag, scenario_family]
+          values: [near_pedestrian_on_crosswalk, near_pedestrian_at_pickup_dropoff, vru_interaction]
       bench2drive:
         role: train and evaluate a vision trajectory planner on image-route-control samples that include turning and braking behavior
         labels:
-          - brake_state
-          - turn_context
-          - risk_weighted_sample
+          - pedestrian and bicycle crossing scenarios
+        match:
+          fields: [scenario_family]
+          values: [CrossingBicycleFlow, DynamicObjectCrossing, ParkingCrossingPedestrian, PedestrianCrossing, VehicleTurningRoutePedestrian]
       carla:
         role: audit a closed-loop right-turn pedestrian-yield rollout under semantically matched conditions
         labels:
           - right_turn_pedestrian_yield
+        match:
+          fields: [semantic_target]
+          values: [right_turn_pedestrian_yield, pedestrian_yield]
 
   - id: stopped_lead_vehicle
     canonical_query: stopped or slow lead vehicle blocking the ego path
@@ -45,20 +55,31 @@ families:
         role: mine stopped-lead anchors with relative pose, speed, and lane-relation validation
         labels:
           - stopped_lead
+        match:
+          fields: [behaviors, source_query_tags]
+          values: [stopped_lead, lane_blocking]
       nuplan:
         role: replay logged ego response to static-obstacle and lead-vehicle contexts
         labels:
           - static_obstacle_context
           - near_long_vehicle
+        match:
+          fields: [scenario_tag, scenario_family]
+          values: [static_obstacle_context, near_trafficcone_on_driveable, near_construction_zone_sign]
       bench2drive:
         role: evaluate following, braking, and lateral-control errors in model-in-the-loop rollouts
         labels:
-          - brake_state
-          - route_completion
+          - blocked-path and obstacle scenarios
+        match:
+          fields: [scenario_family]
+          values: [BlockedIntersection, ConstructionObstacle, HardBreakRoute, ParkedObstacle]
       carla:
         role: reserved semantic target for future closed-loop demo mining
         labels:
           - lead_vehicle_yield
+        match:
+          fields: [semantic_target]
+          values: [lead_vehicle_yield]
 
   - id: lateral_cut_in
     canonical_query: adjacent vehicle cuts into the ego lane
@@ -72,19 +93,30 @@ families:
         role: mine lateral-motion anchors with ego-lane relation and event-window localization
         labels:
           - cut_in
+        match:
+          fields: [behaviors]
+          values: [cut_in]
       nuplan:
         role: replay logged interaction cases involving nearby moving actors
         labels:
           - agent_interaction
+        match:
+          fields: [scenario_tag, scenario_family]
+          values: [agent_interaction]
       bench2drive:
         role: evaluate lateral error, steering, and route completion under dense-traffic samples
         labels:
-          - lateral_error
-          - route_completion
+          - lane-change and cut-in scenarios
+        match:
+          fields: [scenario_family]
+          values: [HazardAtSideLane, HighwayCutIn, InvadingTurn, LaneChange, ParkingCutIn, StaticCutIn]
       carla:
         role: reserved semantic target for natural Traffic Manager lane-interaction rollouts
         labels:
           - adjacent_lane_intrusion
+        match:
+          fields: [semantic_target]
+          values: [adjacent_lane_intrusion, adjacent_lane_interaction]
 
   - id: oncoming_vehicle
     canonical_query: oncoming vehicle near the ego route
@@ -98,19 +130,30 @@ families:
         role: mine opposite-direction actors with relative heading and map-context validation
         labels:
           - oncoming
+        match:
+          fields: [behaviors]
+          values: [oncoming]
       nuplan:
         role: replay interaction windows with high closing-speed risk targets
         labels:
           - vehicle_interaction
+        match:
+          fields: [scenario_tag, scenario_family]
+          values: [high_speed_interaction]
       bench2drive:
         role: evaluate route-conditioned trajectory prediction under urban intersection samples
         labels:
-          - turn_context
-          - trajectory_mode
+          - opposing-traffic scenarios
+        match:
+          fields: [scenario_family]
+          values: [AccidentTwoWays, ConstructionObstacleTwoWays, HazardAtSideLaneTwoWays, OppositeVehicleRunningRedLight, OppositeVehicleTakingPriority]
       carla:
         role: reserved semantic target for intersection and opposing-traffic rollouts
         labels:
           - oncoming_interaction
+        match:
+          fields: [semantic_target]
+          values: [oncoming_interaction]
 
   - id: dense_traffic_following
     canonical_query: dense traffic around ego with following and merging pressure
@@ -124,17 +167,28 @@ families:
         role: mine proximity-heavy anchors with surrounding actor context
         labels:
           - proximity
+        match:
+          fields: [source_query_tags]
+          values: [dense_traffic]
       nuplan:
         role: replay multi-agent traffic windows with comfort and progress targets
         labels:
           - large_vehicle_interaction
           - vehicle_interaction
+        match:
+          fields: [scenario_tag, scenario_family]
+          values: [large_vehicle_interaction]
       bench2drive:
         role: train and diagnose closed-loop behavior on dense multi-camera driving samples
         labels:
-          - object_count
-          - closed_loop_score
+          - actor-flow and merge scenarios
+        match:
+          fields: [scenario_family]
+          values: [EnterActorFlow, InterurbanActorFlow, InterurbanAdvancedActorFlow, MergerIntoSlowTraffic, MergerIntoSlowTrafficV2]
       carla:
         role: provide Traffic Manager ambient vehicles for semantic demo context
         labels:
           - natural_traffic_context
+        match:
+          fields: [semantic_target]
+          values: [natural_traffic_context, dense_traffic_follow]

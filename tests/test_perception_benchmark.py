@@ -119,7 +119,15 @@ def _build_test_db(path: Path) -> None:
         ("ann-3", "s3", "scene-token-1", "scene-0001", 3, "inst-1", "human.pedestrian.adult", "pedestrian", 2.0, -0.5, 2.1, 2, 1.2, 1.0, -1.0, 0.0, 0.0, 8, 0),
         ("ann-4", "s4", "scene-token-1", "scene-0001", 4, "inst-1", "human.pedestrian.adult", "pedestrian", 0.5, -1.0, 1.1, 2, 1.0, 1.0, -1.0, 0.0, 0.0, 8, 0),
     ]
-    conn.execute("INSERT INTO metadata VALUES (?, ?)", ("dataroot", str(path.parent / "data")))
+    conn.executemany(
+        "INSERT INTO metadata VALUES (?, ?)",
+        [
+            ("schema", "nusc_scene_agent_index"),
+            ("schema_version", "1"),
+            ("build_complete", "true"),
+            ("dataroot", str(path.parent / "data")),
+        ],
+    )
     conn.executemany("INSERT INTO samples VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", sample_rows)
     conn.executemany("INSERT INTO agents VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", agent_rows)
     conn.commit()

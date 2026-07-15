@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from nusc_scene_agent.artifact_manifest import build_artifact_entry, write_artifact_manifest
-from nusc_scene_agent.benchmark_registry import build_default_benchmark_registry, write_benchmark_registry
+from nusc_scene_agent.benchmark_catalog import build_default_benchmark_catalog, write_benchmark_catalog
 from nusc_scene_agent.dataset_backends import inspect_dataset_backends
 from nusc_scene_agent.experiment_config import run_experiment_config
 from nusc_scene_agent.result_registry import write_result_registry
@@ -73,7 +73,7 @@ class StructuralFrameworkTest(unittest.TestCase):
         self.assertEqual(len(cases), 1)
         self.assertEqual(cases[0].dataset, "nuplan")
         self.assertEqual(cases[0].benchmark_layer, "replay_regression")
-        self.assertEqual(cases[0].scenario_family, "vru_interaction")
+        self.assertEqual(cases[0].scenario_family, "vru_crossing")
         self.assertEqual(cases[0].actors[0]["role"], "primary_risk_actor")
         self.assertEqual(len(cases[0].ego_history), 1)
         self.assertEqual(len(cases[0].ego_future), 1)
@@ -92,6 +92,12 @@ class StructuralFrameworkTest(unittest.TestCase):
                 "location": "singapore",
                 "passed": True,
                 "validation_score": 91.0,
+                "validation_quality_score": 91.5,
+                "acceptance_score": 91.5,
+                "validation_gate_score": 1.0,
+                "validation_gate_status": "pass",
+                "validation_protocol_version": "2.2",
+                "validation_pass_components": {"proximity_passed": True, "behavior_passed": True},
                 "retrieval_score": 3.0,
                 "min_distance_m": 2.0,
                 "min_ttc_s": 1.0,
@@ -104,8 +110,11 @@ class StructuralFrameworkTest(unittest.TestCase):
         cases = unified_cases_from_nuscenes_case_library(entries)
 
         self.assertEqual(cases[0].dataset, "nuscenes")
-        self.assertEqual(cases[0].scenario_family, "blocked_path_interaction")
+        self.assertEqual(cases[0].scenario_family, "stopped_lead_vehicle")
         self.assertEqual(cases[0].difficulty_label, "high_confidence")
+        self.assertEqual(cases[0].evidence["validation_quality_score"], 91.5)
+        self.assertEqual(cases[0].evidence["acceptance_score"], 91.5)
+        self.assertEqual(cases[0].evidence["validation_gate_status"], "pass")
 
     def test_write_and_load_unified_cases(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -155,11 +164,11 @@ class StructuralFrameworkTest(unittest.TestCase):
             self.assertEqual(inventory["backends"]["nuscenes"]["versions"]["v1.0-mini"]["counts"]["scene"], 1)
             self.assertEqual(inventory["backends"]["nuplan"]["cache_counts"]["mini"], 1)
 
-    def test_benchmark_registry_and_artifact_manifest(self) -> None:
+    def test_benchmark_catalog_and_artifact_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
-            output = root / "registry.json"
-            registry = write_benchmark_registry(output, build_default_benchmark_registry())
+            output = root / "catalog.json"
+            catalog = write_benchmark_catalog(output, build_default_benchmark_catalog())
             artifact = root / "metrics.json"
             artifact.write_text("{}", encoding="utf-8")
             manifest = write_artifact_manifest(
@@ -169,11 +178,11 @@ class StructuralFrameworkTest(unittest.TestCase):
             )
 
             self.assertTrue(output.exists())
-            self.assertIn("nuplan_replay_regression", registry["layers"])
-            self.assertIn("nuplan_closed_loop_replay", registry["layers"])
-            self.assertIn("bench2drive_vision_planner", registry["layers"])
-            self.assertIn("bench2drive_vision_closed_loop", registry["layers"])
-            self.assertIn("carla_semantic_demo", registry["layers"])
+            self.assertIn("nuplan_replay_regression", catalog["layers"])
+            self.assertIn("nuplan_closed_loop_replay", catalog["layers"])
+            self.assertIn("bench2drive_vision_planner", catalog["layers"])
+            self.assertIn("bench2drive_vision_closed_loop", catalog["layers"])
+            self.assertIn("carla_semantic_demo", catalog["layers"])
             self.assertEqual(manifest["overview"]["existing_artifact_count"], 1)
 
     def test_scenario_taxonomy_aligns_all_backends(self) -> None:
@@ -194,16 +203,16 @@ class StructuralFrameworkTest(unittest.TestCase):
                 self.assertTrue(str(backend_spec.get("role") or ""))
                 self.assertTrue(list(backend_spec.get("labels") or []))
 
-    def test_registry_export_experiment_config(self) -> None:
+    def test_catalog_export_experiment_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
-            config = root / "registry.yaml"
+            config = root / "catalog.yaml"
             config.write_text(
                 "\n".join(
                     [
                         "experiment:",
-                        "  id: registry_test",
-                        "  type: registry_export",
+                        "  id: catalog_test",
+                        "  type: catalog_export",
                         f"  output: {root / 'out'}",
                         f"  result_path: {root / 'result.json'}",
                     ]
@@ -214,7 +223,7 @@ class StructuralFrameworkTest(unittest.TestCase):
             result = run_experiment_config(config)
 
             self.assertEqual(result["schema"], "experiment_result_v1")
-            self.assertTrue((root / "out/benchmark_registry.json").exists())
+            self.assertTrue((root / "out/benchmark_catalog.json").exists())
             self.assertTrue((root / "out/dataset_backends.json").exists())
 
     def test_result_registry_collects_layer_outputs(self) -> None:
@@ -466,6 +475,12 @@ class StructuralFrameworkTest(unittest.TestCase):
             self.assertTrue((output_dir / "result_registry.json").exists())
             self.assertTrue((output_dir / "result_registry.csv").exists())
             self.assertTrue((output_dir / "artifact_manifest.json").exists())
+            artifact_manifest = json.loads((output_dir / "artifact_manifest.json").read_text())
+            self.assertTrue(artifact_manifest["metadata"]["registry_json_excluded_from_manifest"])
+            self.assertNotIn(
+                "result_registry.json",
+                {entry["path"] for entry in artifact_manifest["artifacts"]},
+            )
 
     def test_risk_benchmark_suite_experiment_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

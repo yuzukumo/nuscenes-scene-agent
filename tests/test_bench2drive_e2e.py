@@ -13,12 +13,18 @@ from nusc_scene_agent.bench2drive_e2e import (
     VisionE2ELossConfig,
     _DistributedShardSamplerNoPadding,
     _build_vision_e2e_model,
+    _bootstrap_prediction_metrics,
+    compare_vision_e2e_prediction_sets,
     _planner_losses,
+    _trajectory_calibration_comparison,
     build_bench2drive_vision_manifest,
     diagnose_vision_e2e_predictions,
     inspect_bench2drive_dataset,
 )
-from nusc_scene_agent.bench2drive_closed_loop import ClosedLoopControlConfig
+from nusc_scene_agent.bench2drive_closed_loop import (
+    ClosedLoopControlConfig,
+    compare_bench2drive_closed_loop_reports,
+)
 from nusc_scene_agent.carla_closed_loop import (
     PurePursuitConfig,
     _discover_carla_maps,
@@ -47,6 +53,45 @@ from nusc_scene_agent.experiment_config import run_experiment_config
 
 
 class Bench2DriveE2ETest(unittest.TestCase):
+    def test_prediction_comparison_uses_clip_level_pairs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            baseline_path = root / "baseline.jsonl"
+            candidate_path = root / "candidate.jsonl"
+            baseline_rows = []
+            candidate_rows = []
+            for clip_idx in range(2):
+                for frame_idx in range(2):
+                    case_id = f"clip_{clip_idx}:{frame_idx}"
+                    base = {
+                        "case_id": case_id,
+                        "clip_name": f"clip_{clip_idx}",
+                        "scenario_family": "Test",
+                        "target_future_waypoints_ego": [[0.0, -1.0], [0.0, -2.0]],
+                        "predicted_future_waypoints_ego": [[0.0, -1.0], [0.0, -2.0]],
+                        "target_should_brake": False,
+                        "predicted_should_brake": False,
+                    }
+                    candidate = dict(base)
+                    candidate["predicted_future_waypoints_ego"] = [[0.0, -0.5], [0.0, -1.5]]
+                    baseline_rows.append(base)
+                    candidate_rows.append(candidate)
+            baseline_path.write_text("\n".join(json.dumps(row) for row in baseline_rows) + "\n", encoding="utf-8")
+            candidate_path.write_text("\n".join(json.dumps(row) for row in candidate_rows) + "\n", encoding="utf-8")
+
+            report = compare_vision_e2e_prediction_sets(
+                baseline_path,
+                candidate_path,
+                root / "comparison",
+                bootstrap_replicates=16,
+            )
+
+            metrics = {row["metric"]: row for row in report["metrics"]}
+            self.assertEqual(report["case_alignment"]["paired_case_count"], 4)
+            self.assertEqual(metrics["ade_m"]["oriented_improvement"], -0.5)
+            self.assertEqual(metrics["brake_f1"]["baseline_mean"], 0.0)
+            self.assertTrue((root / "comparison" / "prediction_comparison.png").exists())
+
     def test_build_manifest_materializes_camera_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -141,8 +186,15 @@ class Bench2DriveE2ETest(unittest.TestCase):
 
         args = _build_parser().parse_args(["diagnose-bench2drive-vision-planner"])
 
-        self.assertEqual(args.output, "outputs/bench2drive_vision_e2e_trajectory_transformer_final/diagnostics")
+        self.assertEqual(args.output, "outputs/bench2drive_vision_e2e_final/diagnostics")
         self.assertEqual(args.brake_threshold, 0.5)
+
+    def test_closed_loop_cli_accepts_test_split(self) -> None:
+        from nusc_scene_agent.cli import _build_parser
+
+        args = _build_parser().parse_args(["run-bench2drive-vision-closed-loop", "--split", "test"])
+
+        self.assertEqual(args.split, "test")
 
     def test_train_cli_exposes_lateral_aware_loss_options(self) -> None:
         from nusc_scene_agent.cli import _build_parser
@@ -166,6 +218,14 @@ class Bench2DriveE2ETest(unittest.TestCase):
                 "1.5",
                 "--mode-classification-weight",
                 "0.2",
+                "--selected-waypoint-loss-weight",
+                "0.75",
+                "--displacement-loss-weight",
+                "0.2",
+                "--endpoint-loss-weight",
+                "0.1",
+                "--path-length-loss-weight",
+                "0.05",
                 "--selection-metric",
                 "lateral_aware",
             ]
@@ -179,6 +239,10 @@ class Bench2DriveE2ETest(unittest.TestCase):
         self.assertEqual(args.turn_sample_weight, 4.0)
         self.assertEqual(args.turn_lateral_threshold_m, 1.5)
         self.assertEqual(args.mode_classification_weight, 0.2)
+        self.assertEqual(args.selected_waypoint_loss_weight, 0.75)
+        self.assertEqual(args.displacement_loss_weight, 0.2)
+        self.assertEqual(args.endpoint_loss_weight, 0.1)
+        self.assertEqual(args.path_length_loss_weight, 0.05)
         self.assertEqual(args.selection_metric, "lateral_aware")
 
     def test_lateral_weighted_loss_upweights_turn_samples(self) -> None:
@@ -269,8 +333,174 @@ class Bench2DriveE2ETest(unittest.TestCase):
         self.assertAlmostEqual(float(losses["oracle_fde_m"]), 0.0, places=5)
         self.assertGreaterEqual(float(losses["mode_loss"]), 0.0)
 
+    def test_selected_waypoint_loss_is_reported_for_multimodal_output(self) -> None:
+        import torch
+
+        prediction = {
+            "future": torch.zeros((1, 4), dtype=torch.float32),
+            "future_modes": torch.zeros((1, 2, 4), dtype=torch.float32),
+            "mode_logits": torch.zeros((1, 2), dtype=torch.float32),
+            "control": torch.zeros((1, 3), dtype=torch.float32),
+            "brake_logits": torch.zeros((1, 1), dtype=torch.float32),
+        }
+        future = torch.tensor([[1.0, -1.0, 1.0, -2.0]], dtype=torch.float32)
+        control = torch.zeros((1, 3), dtype=torch.float32)
+        brake = torch.zeros((1, 1), dtype=torch.float32)
+
+        losses = _planner_losses(torch, prediction, future, control, brake)
+
+        self.assertIn("selected_waypoint_loss", losses)
+        self.assertGreater(float(losses["selected_waypoint_loss"]), 0.0)
+
+    def test_dynamic_trajectory_losses_are_reported(self) -> None:
+        import torch
+
+        prediction = {
+            "future": torch.tensor([[0.0, -0.5, 0.0, -1.0]], dtype=torch.float32),
+            "control": torch.zeros((1, 3), dtype=torch.float32),
+            "brake_logits": torch.zeros((1, 1), dtype=torch.float32),
+        }
+        future = torch.tensor([[0.0, -1.0, 0.0, -2.0]], dtype=torch.float32)
+        losses = _planner_losses(
+            torch,
+            prediction,
+            future,
+            torch.zeros((1, 3), dtype=torch.float32),
+            torch.zeros((1, 1), dtype=torch.float32),
+            loss_config=VisionE2ELossConfig(
+                displacement_weight=0.2,
+                endpoint_weight=0.1,
+                path_length_weight=0.05,
+            ),
+        )
+
+        self.assertGreater(float(losses["displacement_loss"]), 0.0)
+        self.assertGreater(float(losses["endpoint_loss"]), 0.0)
+        self.assertGreater(float(losses["path_length_loss"]), 0.0)
+        self.assertLess(float(losses["path_length_ratio"]), 1.0)
+
+    def test_mode_calibrator_is_applied_inside_trajectory_model(self) -> None:
+        import torch
+
+        future_steps = 2
+        mode_count = 2
+        feature_count = future_steps * 2 + mode_count * future_steps * 2 + mode_count + 3 + 1
+        config = VisionE2EModelConfig(
+            model_size="tiny",
+            architecture="trajectory_transformer",
+            image_size=32,
+            future_steps=future_steps,
+            trajectory_modes=mode_count,
+            camera_count=2,
+            camera_pooling="transformer",
+            trajectory_mode_calibrator={
+                "enabled": True,
+                "feature_mean": [0.0] * feature_count,
+                "feature_scale": [1.0] * feature_count,
+                "coef": [[0.0] * feature_count for _ in range(mode_count)],
+                "intercept": [5.0, -5.0],
+            },
+        )
+        model = _build_vision_e2e_model(config)
+        prediction = model(
+            torch.zeros((1, 2, 3, 32, 32), dtype=torch.float32),
+            torch.zeros((1, 8), dtype=torch.float32),
+        )
+
+        probabilities = prediction["calibrated_mode_probabilities"]
+        self.assertEqual(tuple(probabilities.shape), (1, mode_count))
+        self.assertAlmostEqual(float(probabilities.sum()), 1.0, places=5)
+        self.assertGreater(float(probabilities[0, 0]), 0.99)
+
+    def test_trajectory_calibration_comparison_uses_paired_clip_bootstrap(self) -> None:
+        rows = []
+        for clip_name in ["clip_a", "clip_b"]:
+            rows.append(
+                {
+                    "case_id": f"{clip_name}:0",
+                    "uncalibrated_future_waypoints_ego": [[0.0, -0.5]],
+                    "predicted_future_waypoints_ego": [[0.0, -0.9]],
+                    "target_future_waypoints_ego": [[0.0, -1.0]],
+                }
+            )
+
+        report = _trajectory_calibration_comparison(rows, seed=7, replicates=16)
+
+        self.assertTrue(report["enabled"])
+        self.assertEqual(report["cluster_count"], 2)
+        self.assertLess(report["metrics"]["ade_m"]["delta"], 0.0)
+
+    def test_prediction_bootstrap_resamples_clips(self) -> None:
+        rows = []
+        for clip_name in ["clip_a", "clip_b"]:
+            for frame_idx in range(2):
+                rows.append(
+                    {
+                        "case_id": f"{clip_name}:{frame_idx}",
+                        "predicted_future_waypoints_ego": [[0.0, -1.0]],
+                        "target_future_waypoints_ego": [[0.0, -1.0]],
+                        "target_should_brake": False,
+                        "predicted_should_brake": False,
+                    }
+                )
+        uncertainty = _bootstrap_prediction_metrics(rows, seed=7, replicates=8)
+        self.assertEqual(uncertainty["method"], "cluster-level percentile bootstrap")
+        self.assertEqual(uncertainty["cluster_count"], 2)
+
 
 class Bench2DriveClosedLoopConfigTest(unittest.TestCase):
+    def test_closed_loop_comparison_uses_paired_case_bootstrap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            baseline_path = root / "baseline.json"
+            candidate_path = root / "candidate.json"
+            baseline_cases = [
+                {
+                    "case_id": f"case_{idx}",
+                    "scenario_family": "CutIn",
+                    "closed_loop_ade_m": 10.0 + idx,
+                    "closed_loop_fde_m": 20.0 + idx,
+                    "mean_lateral_error_m": 2.0,
+                    "route_completion": 0.5,
+                    "closed_loop_score": 0.1,
+                }
+                for idx in range(4)
+            ]
+            candidate_cases = [
+                {
+                    **row,
+                    "closed_loop_ade_m": row["closed_loop_ade_m"] - 2.0,
+                    "closed_loop_fde_m": row["closed_loop_fde_m"] - 3.0,
+                    "mean_lateral_error_m": 1.5,
+                    "route_completion": 0.6,
+                    "closed_loop_score": 0.2,
+                }
+                for row in baseline_cases
+            ]
+            baseline_path.write_text(
+                json.dumps({"schema": "bench2drive_vision_closed_loop_v1", "cases": baseline_cases}),
+                encoding="utf-8",
+            )
+            candidate_path.write_text(
+                json.dumps({"schema": "bench2drive_vision_closed_loop_v1", "cases": candidate_cases}),
+                encoding="utf-8",
+            )
+
+            report = compare_bench2drive_closed_loop_reports(
+                baseline_path,
+                candidate_path,
+                root / "comparison",
+                bootstrap_replicates=32,
+            )
+
+            metrics = {row["metric"]: row for row in report["metrics"]}
+            self.assertEqual(report["case_alignment"]["paired_case_count"], 4)
+            self.assertTrue(report["case_alignment"]["identical_case_sets"])
+            self.assertEqual(metrics["closed_loop_ade_m"]["oriented_improvement"], 2.0)
+            self.assertEqual(metrics["route_completion"]["oriented_improvement"], 0.1)
+            self.assertTrue((root / "comparison" / "closed_loop_comparison.json").exists())
+            self.assertTrue((root / "comparison" / "closed_loop_comparison.png").exists())
+
     def test_closed_loop_control_defaults_use_validated_calibration(self) -> None:
         config = ClosedLoopControlConfig()
 
@@ -287,6 +517,7 @@ class Bench2DriveClosedLoopConfigTest(unittest.TestCase):
 
         self.assertEqual(args.max_cases, 64)
         self.assertEqual(args.max_frames_per_clip, 20)
+        self.assertFalse(args.render_case_media)
         self.assertEqual(args.horizon_s, 10.0)
         self.assertEqual(args.target_speed_mps, 5.5)
         self.assertEqual(args.brake_threshold, 0.85)
@@ -302,6 +533,7 @@ class Bench2DriveClosedLoopConfigTest(unittest.TestCase):
 
         self.assertEqual(closed_loop["max_cases"], 64)
         self.assertEqual(closed_loop["max_frames_per_clip"], 20)
+        self.assertFalse(closed_loop["render_case_media"])
         self.assertEqual(closed_loop["target_speed_mps"], 5.5)
         self.assertEqual(closed_loop["brake_threshold"], 0.85)
         self.assertEqual(closed_loop["lookahead_m"], 9.0)
@@ -370,7 +602,7 @@ class Bench2DriveClosedLoopConfigTest(unittest.TestCase):
 
         args = _build_parser().parse_args(["audit-carla-vision-rollout"])
 
-        self.assertEqual(args.report, "outputs/carla_semantic_demo_trajectory_transformer_final/carla_semantic_demo_report.json")
+        self.assertEqual(args.report, "outputs/carla_semantic_demo_final/carla_semantic_demo_report.json")
         self.assertEqual(args.min_resolution_width, 1920)
         self.assertEqual(args.max_scripted_vehicles, 0)
         self.assertEqual(args.max_mean_lateral_error_m, 2.5)
@@ -1356,7 +1588,7 @@ class CarlaClosedLoopUtilityTest(unittest.TestCase):
                         "carla_vision_closed_loop:",
                         f"  output: {output_dir}",
                         "  carla_root: external/carla/latest",
-                        "  checkpoint: outputs/bench2drive_vision_e2e_trajectory_transformer_final/vision_e2e_planner_best.pt",
+                        "  checkpoint: outputs/bench2drive_vision_e2e_final/vision_e2e_planner_best.pt",
                         "  horizon_s: 1.0",
                         "  rpc_timeout_s: 12.0",
                         "  render_gif: false",

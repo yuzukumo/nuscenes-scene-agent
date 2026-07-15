@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from nusc_scene_agent.artifact_manifest import build_artifact_entry, write_artifact_manifest
-from nusc_scene_agent.benchmark_registry import build_default_benchmark_registry
+from nusc_scene_agent.benchmark_catalog import build_default_benchmark_catalog
 
 
 RESULT_REGISTRY_SCHEMA = "benchmark_result_registry_v1"
@@ -17,13 +17,13 @@ DEFAULT_RESULT_SOURCES = [
     Path("outputs/risk_benchmark_suite_v1/experiment_result.json"),
     Path("outputs/nuplan_replay_sweep_v1/nuplan_replay_sweep_summary.json"),
     Path("outputs/nuplan_closed_loop_sweep_v1/nuplan_closed_loop_sweep_summary.json"),
-    Path("outputs/bench2drive_vision_e2e_trajectory_transformer_final/training_report.json"),
-    Path("outputs/bench2drive_vision_e2e_trajectory_transformer_final/eval/evaluation_report.json"),
-    Path("outputs/bench2drive_vision_e2e_trajectory_transformer_final/diagnostics/planner_diagnostics_report.json"),
-    Path("outputs/bench2drive_vision_closed_loop_trajectory_transformer_final/closed_loop_report.json"),
-    Path("outputs/carla_semantic_demo_trajectory_transformer_final/carla_semantic_demo_mining_report.json"),
-    Path("outputs/carla_semantic_demo_trajectory_transformer_final/carla_semantic_demo_report.json"),
-    Path("outputs/carla_semantic_demo_trajectory_transformer_final/carla_semantic_demo_audit.json"),
+    Path("outputs/bench2drive_vision_e2e_final/training_report.json"),
+    Path("outputs/bench2drive_vision_e2e_final/eval_test/evaluation_report.json"),
+    Path("outputs/bench2drive_vision_e2e_final/diagnostics/planner_diagnostics_report.json"),
+    Path("outputs/bench2drive_vision_closed_loop_final/closed_loop_report.json"),
+    Path("outputs/carla_semantic_demo_final/carla_semantic_demo_mining_report.json"),
+    Path("outputs/carla_semantic_demo_final/carla_semantic_demo_report.json"),
+    Path("outputs/carla_semantic_demo_final/carla_semantic_demo_audit.json"),
     Path("outputs/model_in_the_loop_failure_mining_v1/failure_mining_report.json"),
 ]
 
@@ -37,9 +37,17 @@ def write_result_registry(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     source_paths = [Path(path) for path in (sources or DEFAULT_RESULT_SOURCES)]
-    entries = [_build_result_entry(path) for path in source_paths]
-    entries = [entry for entry in entries if entry is not None]
-    layer_registry = build_default_benchmark_registry()
+    source_status = [
+        {
+            "path": str(path),
+            "exists": path.exists(),
+            "size_bytes": path.stat().st_size if path.exists() and path.is_file() else 0,
+        }
+        for path in source_paths
+    ]
+    entries = [entry for path in source_paths if (entry := _build_result_entry(path)) is not None]
+    missing_sources = [item["path"] for item in source_status if not item["exists"]]
+    layer_catalog = build_default_benchmark_catalog()
     payload = {
         "schema": RESULT_REGISTRY_SCHEMA,
         "metadata": dict(metadata or {}),
@@ -48,8 +56,13 @@ def write_result_registry(
             "layer_count": len({entry["layer_id"] for entry in entries}),
             "source_count": len(source_paths),
             "existing_source_count": sum(1 for path in source_paths if path.exists()),
+            "missing_source_count": len(missing_sources),
+            "complete": not missing_sources,
         },
-        "layers": layer_registry.get("layers", {}),
+        "source_status": source_status,
+        "missing_sources": missing_sources,
+        "catalog_schema": layer_catalog.get("schema"),
+        "layers": layer_catalog.get("layers", {}),
         "results": entries,
     }
     (output_dir / "result_registry.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -58,7 +71,6 @@ def write_result_registry(
     artifact_manifest = write_artifact_manifest(
         output_dir=output_dir,
         artifacts=[
-            build_artifact_entry(output_dir / "result_registry.json", "summary", "result_registry", output_dir),
             build_artifact_entry(output_dir / "result_registry.csv", "summary", "result_registry_table", output_dir),
             build_artifact_entry(output_dir / "result_registry.md", "summary", "result_registry_report", output_dir),
             *[
@@ -66,7 +78,11 @@ def write_result_registry(
                 for path in source_paths
             ],
         ],
-        metadata={"schema": RESULT_REGISTRY_SCHEMA},
+        metadata={
+            "schema": RESULT_REGISTRY_SCHEMA,
+            "registry_json": str(output_dir / "result_registry.json"),
+            "registry_json_excluded_from_manifest": True,
+        },
     )
     payload["artifact_manifest"] = {
         "path": str(output_dir / "artifact_manifest.json"),
@@ -193,6 +209,9 @@ def _nuplan_closed_loop_sweep_entry(path: Path, payload: Mapping[str, Any]) -> D
             "best_non_oracle_closed_loop_score": best_non_oracle.get("mean_closed_loop_score"),
             "best_non_oracle_ego_ade_m": best_non_oracle.get("mean_ego_ade_m"),
             "best_non_oracle_progress_ratio": best_non_oracle.get("mean_progress_ratio"),
+            "best_non_oracle_raw_progress_ratio": best_non_oracle.get(
+                "mean_raw_progress_ratio"
+            ),
         },
     }
 
@@ -500,6 +519,7 @@ def _render_registry_markdown(payload: Mapping[str, Any]) -> str:
         f"- Results: `{overview.get('result_count', 0)}`",
         f"- Layers: `{overview.get('layer_count', 0)}`",
         f"- Existing sources: `{overview.get('existing_source_count', 0)}/{overview.get('source_count', 0)}`",
+        f"- Complete: `{overview.get('complete', False)}`",
         "",
         "| Layer | Source | Key Metrics |",
         "| --- | --- | --- |",
@@ -509,6 +529,10 @@ def _render_registry_markdown(payload: Mapping[str, Any]) -> str:
         lines.append(
             f"| `{entry.get('layer_id', '')}` | `{entry.get('source_path', '')}` | {metrics} |"
         )
+    missing_sources = list(payload.get("missing_sources") or [])
+    if missing_sources:
+        lines.extend(["", "## Missing Sources", ""])
+        lines.extend(f"- `{path}`" for path in missing_sources)
     lines.append("")
     return "\n".join(lines)
 

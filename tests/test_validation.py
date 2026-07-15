@@ -16,6 +16,57 @@ from nusc_scene_agent.models import ParsedQuery, RetrievalCandidate
 
 
 class ValidationHeuristicsTest(unittest.TestCase):
+    def test_validation_score_profiles_are_normalized(self) -> None:
+        config = ValidationConfig(score_profile="equal")
+
+        weights = config.resolved_score_weights()
+
+        self.assertAlmostEqual(sum(weights.values()), 1.0)
+        self.assertTrue(all(value > 0.0 for value in weights.values()))
+
+    def test_validation_score_profile_rejects_unknown_name(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unknown validation score profile"):
+            ValidationConfig(score_profile="unknown").resolved_score_weights()
+
+    def test_validation_config_resolves_threshold_overrides(self) -> None:
+        config = ValidationConfig(
+            threshold_overrides={"crossing_lateral_span_m": 2.5},
+            pass_threshold_overrides={"proximity_score": 0.2},
+        )
+
+        self.assertEqual(config.resolved_heuristic_thresholds()["crossing_lateral_span_m"], 2.5)
+        self.assertEqual(config.resolved_pass_thresholds()["proximity_score"], 0.2)
+        self.assertEqual(config.to_dict()["pass_thresholds"]["proximity_score"], 0.2)
+
+    def test_validation_config_rejects_invalid_numeric_configuration(self) -> None:
+        with self.assertRaisesRegex(ValueError, "finite number"):
+            ValidationConfig(
+                threshold_overrides={"crossing_lateral_span_m": float("nan")}
+            ).resolved_heuristic_thresholds()
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            ValidationConfig(
+                threshold_overrides={"cut_in_closing_min_consecutive_frames": 1.5}
+            ).resolved_heuristic_thresholds()
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            ValidationConfig(
+                threshold_overrides={"cut_in_closing_min_consecutive_frames": 0}
+            ).resolved_heuristic_thresholds()
+        with self.assertRaisesRegex(ValueError, "must be smaller"):
+            ValidationConfig(
+                threshold_overrides={
+                    "crossing_front_min_x_m": 20.0,
+                    "crossing_front_max_x_m": 10.0,
+                }
+            ).resolved_heuristic_thresholds()
+        with self.assertRaisesRegex(ValueError, r"must be in \[0, 1\]"):
+            ValidationConfig(
+                pass_threshold_overrides={"proximity_score": 1.1}
+            ).resolved_pass_thresholds()
+        with self.assertRaisesRegex(ValueError, "finite number"):
+            ValidationConfig(
+                score_weight_overrides={"proximity": float("inf")}
+            ).resolved_score_weights()
+
     def test_cut_in_detection(self) -> None:
         track = pd.DataFrame(
             [
@@ -40,6 +91,42 @@ class ValidationHeuristicsTest(unittest.TestCase):
         )
         self.assertTrue(detect_cut_in_like(track, positions=["left"]))
         self.assertFalse(detect_cut_in_like(track, positions=["right"]))
+
+    def test_cut_in_detection_uses_local_closing_motion(self) -> None:
+        track = pd.DataFrame(
+            [
+                {"sample_idx": 1, "x_ego": 20.0, "y_ego": 7.0},
+                {"sample_idx": 2, "x_ego": 21.0, "y_ego": 7.0},
+                {"sample_idx": 3, "x_ego": 22.0, "y_ego": 6.0},
+                {"sample_idx": 4, "x_ego": 16.0, "y_ego": 5.5},
+                {"sample_idx": 5, "x_ego": 10.0, "y_ego": 5.0},
+                {"sample_idx": 6, "x_ego": 11.0, "y_ego": 4.5},
+                {"sample_idx": 7, "x_ego": 12.0, "y_ego": 3.4},
+                {"sample_idx": 8, "x_ego": 13.0, "y_ego": 3.0},
+                {"sample_idx": 9, "x_ego": 14.0, "y_ego": 2.8},
+                {"sample_idx": 10, "x_ego": 15.0, "y_ego": 2.6},
+                {"sample_idx": 11, "x_ego": 16.0, "y_ego": 2.4},
+                {"sample_idx": 12, "x_ego": 17.0, "y_ego": 2.2},
+                {"sample_idx": 13, "x_ego": 18.0, "y_ego": 2.0},
+            ]
+        )
+        self.assertTrue(detect_cut_in_like(track, positions=["left"]))
+
+    def test_cut_in_detection_rejects_non_closing_lane_entry(self) -> None:
+        track = pd.DataFrame(
+            [
+                {"sample_idx": 1, "x_ego": 8.0, "y_ego": 7.0},
+                {"sample_idx": 2, "x_ego": 9.0, "y_ego": 7.0},
+                {"sample_idx": 3, "x_ego": 10.0, "y_ego": 6.0},
+                {"sample_idx": 4, "x_ego": 11.0, "y_ego": 5.5},
+                {"sample_idx": 5, "x_ego": 12.0, "y_ego": 5.0},
+                {"sample_idx": 6, "x_ego": 13.0, "y_ego": 4.5},
+                {"sample_idx": 7, "x_ego": 14.0, "y_ego": 3.4},
+                {"sample_idx": 8, "x_ego": 15.0, "y_ego": 3.0},
+                {"sample_idx": 9, "x_ego": 16.0, "y_ego": 2.8},
+            ]
+        )
+        self.assertFalse(detect_cut_in_like(track, positions=["left"]))
 
     def test_map_supported_crossing_detection(self) -> None:
         track = pd.DataFrame(
@@ -222,6 +309,106 @@ class ValidationHeuristicsTest(unittest.TestCase):
         self.assertEqual(case.evidence["validation_profile"], "no_map_no_event")
         self.assertFalse(case.evidence["map_context_enabled"])
         self.assertFalse(case.evidence["event_localization_enabled"])
+
+    def test_validate_candidate_records_dense_context_agent_count(self) -> None:
+        query = ParsedQuery(
+            original_text="pedestrian crossing",
+            normalized_text="pedestrian crossing",
+            category_groups=["pedestrian"],
+            positions=["front"],
+            behaviors=["crossing"],
+            near_distance_m=20.0,
+            max_ttc_s=5.0,
+        )
+        candidate = RetrievalCandidate(
+            ann_token="ann-a",
+            sample_token="sample-a",
+            scene_token="scene-a",
+            scene_name="scene-0001",
+            sample_idx=12,
+            instance_token="instance-a",
+            category_name="human.pedestrian.adult",
+            category_group="pedestrian",
+            location="singapore-queenstown",
+            distance=2.5,
+            ttc=1.0,
+            x_ego=0.5,
+            y_ego=0.2,
+            speed=1.0,
+            rel_vx=-1.0,
+            rel_vy=0.0,
+            heading_delta=0.0,
+            retrieval_score=90.0,
+        )
+        timeline = pd.DataFrame(
+            [
+                {
+                    "sample_idx": 12,
+                    "sample_token": "sample-a",
+                    "timestamp_us": 1000000,
+                    "x_ego": 0.5,
+                    "y_ego": 0.2,
+                    "distance": 2.5,
+                    "ttc": 1.0,
+                    "rel_vx": -1.0,
+                    "speed": 1.0,
+                    "heading_delta": 0.0,
+                    "ego_x": 0.0,
+                    "ego_y": 0.0,
+                    "ego_yaw": 0.0,
+                },
+                {
+                    "sample_idx": 13,
+                    "sample_token": "sample-b",
+                    "timestamp_us": 1500000,
+                    "x_ego": -3.0,
+                    "y_ego": 2.5,
+                    "distance": 4.5,
+                    "ttc": 2.5,
+                    "rel_vx": -1.0,
+                    "speed": 1.0,
+                    "heading_delta": 0.0,
+                    "ego_x": 0.0,
+                    "ego_y": 0.0,
+                    "ego_yaw": 0.0,
+                },
+            ]
+        )
+        context_agents = pd.DataFrame([{"ann_token": "context-{0}".format(idx)} for idx in range(60)])
+        ego_window = pd.DataFrame([{"sample_idx": 12, "ego_x": 0.0, "ego_y": 0.0, "ego_yaw": 0.0}])
+
+        with patch(
+            "nusc_scene_agent.validation._load_validation_window",
+            return_value=(timeline, context_agents, ego_window),
+        ):
+            case = validate_candidate(
+                None,
+                query,
+                candidate,
+                validation_config=ValidationConfig(
+                    name="dense_context",
+                    enable_map_context=False,
+                    enable_event_localization=False,
+                    enable_actor_grounding=False,
+                ),
+            )
+
+        self.assertEqual(case.evidence["context_agent_count"], 60)
+        self.assertIn("Context agents loaded without truncation: 60", case.notes)
+        self.assertIn("validation_component_scores", case.evidence)
+        self.assertIn("validation_pass_components", case.evidence)
+        self.assertIn("validation_pass_thresholds", case.evidence)
+        self.assertTrue(case.evidence["validation_pass_components"]["proximity_passed"])
+        self.assertFalse(case.evidence["validation_pass_components"]["behavior_passed"])
+        self.assertFalse(case.evidence["validation_pass_components"]["overall_passed"])
+        self.assertGreater(case.validation_score, 0.0)
+        self.assertGreater(case.validation_quality_score, 0.0)
+        self.assertEqual(case.acceptance_score, 0.0)
+        self.assertEqual(case.evidence["acceptance_score"], 0.0)
+        self.assertEqual(
+            case.evidence["validation_score_semantics"],
+            "continuous quality score in [0, 100]; acceptance is a separate gate",
+        )
 
 
 if __name__ == "__main__":

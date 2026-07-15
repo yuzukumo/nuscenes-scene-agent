@@ -39,6 +39,13 @@ python -m nusc_scene_agent build-index \
   --db artifacts/index/v1.0-trainval.sqlite
 ```
 
+Validate or stamp a structurally compatible index created by an earlier project version:
+
+```bash
+python -m nusc_scene_agent migrate-index \
+  --db artifacts/index/v1.0-trainval.sqlite
+```
+
 ## Local LLM
 
 The benchmark suite uses an Ollama server for structured query planning and artifact review. Run `ollama serve` in a separate shell if the service is not already active.
@@ -54,6 +61,17 @@ The default endpoint and model are also configurable:
 export NUSC_SCENE_AGENT_OLLAMA_BASE_URL="http://127.0.0.1:11434"
 export NUSC_SCENE_AGENT_OLLAMA_MODEL="gemma4:latest"
 ```
+
+Record local model metadata when publishing benchmark artifacts:
+
+```bash
+python -m nusc_scene_agent inspect-ollama-model \
+  --output outputs/ollama_model_metadata.json
+
+export NUSC_SCENE_AGENT_OLLAMA_DIGEST="$(python -c 'import json; print(json.load(open("outputs/ollama_model_metadata.json"))["digest"])')"
+```
+
+The full-suite configuration requires this digest. The metadata file records the resolved model identifier and the tag used to load it.
 
 ## Full Benchmark Suite
 
@@ -79,6 +97,55 @@ Run the `nuScenes` benchmark layers from an existing case library:
 ```bash
 python -m nusc_scene_agent run-experiment-config \
   --config configs/risk_benchmark_suite.yaml
+```
+
+Compare retrieval score profiles on the same query suite:
+
+```bash
+python -m nusc_scene_agent benchmark-score-sweep \
+  --config benchmarks/trainval_suite_v1.yaml \
+  --db artifacts/index/v1.0-trainval.sqlite \
+  --output outputs/retrieval_score_profile_sweep_v1
+```
+
+Compare validation-quality weighting profiles while holding retrieval and acceptance fixed:
+
+```bash
+python -m nusc_scene_agent benchmark-validation-score-sweep \
+  --config benchmarks/trainval_suite_v1.yaml \
+  --db artifacts/index/v1.0-trainval.sqlite \
+  --profile default --profile equal \
+  --output outputs/validation_score_profile_sweep_v1
+```
+
+Run a behavior-threshold robustness sweep on the same trainval index:
+
+```bash
+python -m nusc_scene_agent benchmark-threshold-sweep \
+  --config benchmarks/trainval_suite_v1.yaml \
+  --db artifacts/index/v1.0-trainval.sqlite \
+  --scale 0.85 --scale 1.0 --scale 1.15 \
+  --output outputs/validation_threshold_sweep_v1
+```
+
+The validation-quality and threshold sweeps vary one deterministic component at a time. Their metrics measure anchor consistency and score sensitivity, not independent semantic recall.
+
+Generate a fixed author-audit subset from the validated case library:
+
+```bash
+python -m nusc_scene_agent generate-human-audit-set \
+  --case-library outputs/trainval_case_library_v1/case_library.json \
+  --output audits/author_audit_v1 \
+  --sample-size 100 \
+  --seed 7
+```
+
+Review `audits/author_audit_v1/review_queue.md`, fill `human_audit_items.jsonl` or the CSV copy, then evaluate the completed labels:
+
+```bash
+python -m nusc_scene_agent evaluate-human-audit-set \
+  --annotations audits/author_audit_v1/human_audit_items.jsonl \
+  --output audits/author_audit_v1/evaluation
 ```
 
 Train the weakly supervised query-scene reranker:
@@ -157,8 +224,8 @@ python -m nusc_scene_agent run-experiment-config \
   --config configs/carla_semantic_demo.yaml
 
 python -m nusc_scene_agent audit-carla-vision-rollout \
-  --report outputs/carla_semantic_demo_trajectory_transformer_final/carla_semantic_demo_report.json \
-  --output outputs/carla_semantic_demo_trajectory_transformer_final/carla_semantic_demo_audit.json \
+  --report outputs/carla_semantic_demo_final/carla_semantic_demo_report.json \
+  --output outputs/carla_semantic_demo_final/carla_semantic_demo_audit.json \
   --require-semantic-match
 ```
 
@@ -190,7 +257,7 @@ python -m nusc_scene_agent build-bench2drive-vision-tensor-cache \
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --standalone --nproc_per_node=8 \
   -m nusc_scene_agent train-bench2drive-vision-planner \
   --manifest artifacts/bench2drive/vision_e2e_manifest_tensor_160.jsonl \
-  --output outputs/bench2drive_vision_e2e_trajectory_transformer_final \
+  --output outputs/bench2drive_vision_e2e_final \
   --epochs 24 \
   --batch-size 64 \
   --image-size 160 \
@@ -210,22 +277,43 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --standalone --nproc_per_node=8 \
   --risk-sample-weight 1.25 \
   --lateral-loss-weight 2.0 \
   --turn-sample-weight 2.0 \
+  --selected-waypoint-loss-weight 0.5 \
+  --displacement-loss-weight 0.1 \
+  --endpoint-loss-weight 0.025 \
+  --path-length-loss-weight 0.025 \
   --mode-classification-weight 0.05
 
 CUDA_VISIBLE_DEVICES=0 python -m nusc_scene_agent evaluate-bench2drive-vision-planner \
   --manifest artifacts/bench2drive/vision_e2e_manifest_tensor_160.jsonl \
-  --checkpoint outputs/bench2drive_vision_e2e_trajectory_transformer_final/vision_e2e_planner_best.pt \
-  --output outputs/bench2drive_vision_e2e_trajectory_transformer_final/eval \
+  --checkpoint outputs/bench2drive_vision_e2e_final/vision_e2e_planner_best.pt \
+  --output outputs/bench2drive_vision_e2e_final/eval_val \
   --split val \
   --batch-size 128 \
   --image-size 160 \
   --num-workers 4 \
   --prefetch-factor 4
 
+python -m nusc_scene_agent calibrate-bench2drive-trajectory-selection \
+  --predictions outputs/bench2drive_vision_e2e_final/eval_val/predictions.jsonl \
+  --evaluation-report outputs/bench2drive_vision_e2e_final/eval_val/evaluation_report.json \
+  --checkpoint outputs/bench2drive_vision_e2e_final/vision_e2e_planner_best.pt \
+  --output-checkpoint outputs/bench2drive_vision_e2e_final/vision_e2e_planner_calibrated.pt \
+  --output-report outputs/bench2drive_vision_e2e_final/trajectory_selection_calibration_report.json
+
+CUDA_VISIBLE_DEVICES=0 python -m nusc_scene_agent evaluate-bench2drive-vision-planner \
+  --manifest artifacts/bench2drive/vision_e2e_manifest_tensor_160.jsonl \
+  --checkpoint outputs/bench2drive_vision_e2e_final/vision_e2e_planner_calibrated.pt \
+  --output outputs/bench2drive_vision_e2e_final/eval_test \
+  --split test \
+  --batch-size 128 \
+  --image-size 160 \
+  --num-workers 4 \
+  --prefetch-factor 4
+
 python -m nusc_scene_agent diagnose-bench2drive-vision-planner \
-  --predictions outputs/bench2drive_vision_e2e_trajectory_transformer_final/eval/predictions.jsonl \
-  --evaluation-report outputs/bench2drive_vision_e2e_trajectory_transformer_final/eval/evaluation_report.json \
-  --output outputs/bench2drive_vision_e2e_trajectory_transformer_final/diagnostics
+  --predictions outputs/bench2drive_vision_e2e_final/eval_test/predictions.jsonl \
+  --evaluation-report outputs/bench2drive_vision_e2e_final/eval_test/evaluation_report.json \
+  --output outputs/bench2drive_vision_e2e_final/diagnostics
 
 CUDA_VISIBLE_DEVICES=0 python -m nusc_scene_agent run-experiment-config \
   --config configs/bench2drive_vision_closed_loop.yaml
@@ -266,6 +354,6 @@ Inspect local benchmark and dataset metadata:
 python -m nusc_scene_agent inspect-dataset-backends \
   --output outputs/dataset_backends_inventory.json
 
-python -m nusc_scene_agent export-benchmark-registry \
-  --output outputs/benchmark_registry.json
+python -m nusc_scene_agent export-benchmark-catalog \
+  --output outputs/benchmark_catalog.json
 ```

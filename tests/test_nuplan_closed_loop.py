@@ -47,6 +47,17 @@ class NuPlanClosedLoopTest(unittest.TestCase):
             self.assertAlmostEqual(oracle["overview"]["mean_ego_ade_m"], 0.0)
             self.assertAlmostEqual(history["overview"]["mean_ego_ade_m"], 0.0)
             self.assertGreaterEqual(history["overview"]["mean_closed_loop_score"], 0.9)
+            self.assertLessEqual(history["overview"]["mean_progress_ratio"], 1.0)
+            self.assertIn("mean_raw_progress_ratio", history["overview"])
+            self.assertTrue(
+                all(
+                    0.0 <= float(row["progress_ratio"]) <= 1.0
+                    for row in history["case_metrics"]
+                )
+            )
+            self.assertTrue(
+                all("raw_progress_ratio" in row for row in history["case_metrics"])
+            )
 
     def test_experiment_config_supports_closed_loop_study(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

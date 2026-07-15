@@ -135,6 +135,7 @@ class BenchmarkMetricsTest(unittest.TestCase):
         self.assertEqual(len(metrics["behavior_coverage"]), 2)
         self.assertEqual(metrics["location_distribution"][0]["case_count"], 1)
         self.assertEqual(metrics["reference_metrics"]["query_count"], 0)
+        self.assertEqual(metrics["ranking_stage_metrics"], {})
 
     def test_build_benchmark_metrics_tracks_reference_case_objectives(self) -> None:
         case = make_case(
@@ -199,6 +200,49 @@ class BenchmarkMetricsTest(unittest.TestCase):
         self.assertAlmostEqual(metrics["reference_metrics"]["mean_peak_error"], 0.0)
         self.assertEqual(metrics["reference_metrics"]["contrastive_group_count"], 1)
         self.assertEqual(metrics["reference_metrics"]["contrastive_group_success_at_1_count"], 0)
+
+    def test_best_quality_follows_selection_gate_and_exposes_ungated_maximum(self) -> None:
+        rejected_high_quality = make_case(
+            query_text="pedestrian crossing",
+            category_group="pedestrian",
+            category_name="human.pedestrian.adult",
+            location="singapore-queenstown",
+            sample_token="sample-high",
+            instance_token="instance-high",
+            score=99.0,
+            passed=False,
+        )
+        accepted_lower_quality = make_case(
+            query_text="pedestrian crossing",
+            category_group="pedestrian",
+            category_name="human.pedestrian.adult",
+            location="singapore-queenstown",
+            sample_token="sample-pass",
+            instance_token="instance-pass",
+            score=80.0,
+            passed=True,
+        )
+        result = {
+            "id": "gate_priority",
+            "query": accepted_lower_quality.query,
+            "query_spec": BenchmarkQuerySpec(
+                id="gate_priority",
+                description="gate priority",
+                natural_language="pedestrian crossing",
+                actors=["pedestrian"],
+                behaviors=["crossing"],
+            ),
+            "selected_cases": [rejected_high_quality, accepted_lower_quality],
+        }
+
+        metrics = build_benchmark_metrics([result], build_case_library([result]))
+        row = metrics["query_metrics"][0]
+
+        self.assertEqual(row["best_validation_quality_score"], 80.0)
+        self.assertEqual(row["max_validation_quality_score"], 99.0)
+        self.assertEqual(row["best_scene_name"], "scene-s")
+        self.assertEqual(metrics["overview"]["mean_best_validation_quality_score"], 80.0)
+        self.assertEqual(metrics["overview"]["mean_max_validation_quality_score"], 99.0)
 
     def test_write_benchmark_metrics_emits_summary_files(self) -> None:
         metrics = {

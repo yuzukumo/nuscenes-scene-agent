@@ -7,6 +7,87 @@
   },
   "cases": [
     {
+      "benchmark_group": "scenario_022b90e4ad174f848690f010cc06f404_b78750237c66467b9cb4c24ec3c4398e",
+      "reference_case_key": "022b90e4ad174f848690f010cc06f404:b78750237c66467b9cb4c24ec3c4398e",
+      "reference_scene_name": "scene-0921",
+      "scene_name": "scene-0921",
+      "scene_token": "112ca771e318478a88cfa692f61ffcac",
+      "instance_token": "b78750237c66467b9cb4c24ec3c4398e",
+      "category_name": "vehicle.truck",
+      "category_group": "truck",
+      "location": "singapore-queenstown",
+      "primary_behavior": "cut_in",
+      "behaviors": [
+        "cut_in"
+      ],
+      "actors": [
+        "truck"
+      ],
+      "tags": [
+        "scenario_mining",
+        "canonical",
+        "cut_in",
+        "paraphrase"
+      ],
+      "source_query_ids": [
+        "scenario_022b90e4ad174f848690f010cc06f404_b78750237c66467b9cb4c24ec3c4398e_scenario_canonical",
+        "scenario_022b90e4ad174f848690f010cc06f404_b78750237c66467b9cb4c24ec3c4398e_scenario_paraphrase"
+      ],
+      "source_query_texts": [
+        "a truck merges into ego lane from the right",
+        "a truck merges from the passenger side into ego lane"
+      ],
+      "anchor_sample_token": "022b90e4ad174f848690f010cc06f404",
+      "anchor_sample_idx": 12,
+      "event_start_sample_idx": 11,
+      "event_end_sample_idx": 13,
+      "event_peak_sample_idx": 12,
+      "frame_count": 3,
+      "frames": [
+        {
+          "sample_token": "ae572fa851ae494a8f9288e627db0be8",
+          "sample_idx": 11,
+          "timestamp_us": 1538984493947953,
+          "x_ego": 3.413745496877823,
+          "y_ego": -5.271822729464475,
+          "distance": 6.280587011446611
+        },
+        {
+          "sample_token": "022b90e4ad174f848690f010cc06f404",
+          "sample_idx": 12,
+          "timestamp_us": 1538984494448362,
+          "x_ego": 0.487334466111065,
+          "y_ego": -4.5503341047178765,
+          "distance": 4.576356121022314
+        },
+        {
+          "sample_token": "f6cb281807244d7f8043e73b66ccb5e1",
+          "sample_idx": 13,
+          "timestamp_us": 1538984494948261,
+          "x_ego": -2.6451521406827396,
+          "y_ego": -3.8950390706204416,
+          "distance": 4.708307467553307
+        }
+      ],
+      "anchor_visibility": 4,
+      "min_distance_m": 4.576,
+      "min_ttc_s": 0.08,
+      "map_support": {
+        "available": true,
+        "actor_on_crosswalk_any": false,
+        "actor_on_walkway_any": false,
+        "actor_uses_ego_lane_any": false,
+        "shares_lane_at_anchor": false
+      },
+      "risk_facets": {
+        "distance_band": "near_range",
+        "ttc_band": "urgent_ttc",
+        "visibility_band": "clear_visibility",
+        "map_relation": "merge_like",
+        "occlusion_proxy": "large_actor"
+      }
+    },
+    {
       "benchmark_group": "scenario_08461b5c6f364b1aa0549f44f84ac3be_ddf5942930ab463fbaf402fa52d0c9bc",
       "reference_case_key": "08461b5c6f364b1aa0549f44f84ac3be:ddf5942930ab463fbaf402fa52d0c9bc",
       "reference_scene_name": "scene-1067",
@@ -661,103 +742,6 @@
       }
     },
     {
-      "benchmark_group": "scenario_214326b2bca0478d85c9eb80f01f4ff1_7693f6b392f044699aaa0c7a1c6da2a5",
-      "reference_case_key": "214326b2bca0478d85c9eb80f01f4ff1:7693f6b392f044699aaa0c7a1c6da2a5",
-      "reference_scene_name": "scene-0367",
-      "scene_name": "scene-0367",
-      "scene_token": "4ea72ee843914a6cbd755e39f2489156",
-      "instance_token": "7693f6b392f044699aaa0c7a1c6da2a5",
-      "category_name": "vehicle.truck",
-      "category_group": "truck",
-      "location": "singapore-onenorth",
-      "primary_behavior": "oncoming",
-      "behaviors": [
-        "oncoming"
-      ],
-      "actors": [
-        "truck"
-      ],
-      "tags": [
-        "scenario_mining",
-        "canonical",
-        "oncoming",
-        "paraphrase"
-      ],
-      "source_query_ids": [
-        "scenario_214326b2bca0478d85c9eb80f01f4ff1_7693f6b392f044699aaa0c7a1c6da2a5_scenario_canonical",
-        "scenario_214326b2bca0478d85c9eb80f01f4ff1_7693f6b392f044699aaa0c7a1c6da2a5_scenario_paraphrase"
-      ],
-      "source_query_texts": [
-        "an oncoming truck approaches ego in the same corridor",
-        "a truck approaches ego in the opposite direction"
-      ],
-      "anchor_sample_token": "214326b2bca0478d85c9eb80f01f4ff1",
-      "anchor_sample_idx": 7,
-      "event_start_sample_idx": 3,
-      "event_end_sample_idx": 7,
-      "event_peak_sample_idx": 7,
-      "frame_count": 5,
-      "frames": [
-        {
-          "sample_token": "dc4af2033d834737bd567ddb0ab02460",
-          "sample_idx": 3,
-          "timestamp_us": 1533279925549258,
-          "x_ego": 14.269581825011414,
-          "y_ego": -2.0794193591541443,
-          "distance": 14.420296471706854
-        },
-        {
-          "sample_token": "a0f2af78d3ad4a1a82f90308df7ba611",
-          "sample_idx": 4,
-          "timestamp_us": 1533279925949621,
-          "x_ego": 11.568248068288995,
-          "y_ego": -2.3862561525701267,
-          "distance": 11.811798414938805
-        },
-        {
-          "sample_token": "1164a84d6ebe4f3c8e2034916ee9e6db",
-          "sample_idx": 5,
-          "timestamp_us": 1533279926399714,
-          "x_ego": 8.383000116403196,
-          "y_ego": -2.738513339630572,
-          "distance": 8.81896514694046
-        },
-        {
-          "sample_token": "cda6a4d1e0e94852a3fd3f79b013f8d4",
-          "sample_idx": 6,
-          "timestamp_us": 1533279926899581,
-          "x_ego": 4.91635922714579,
-          "y_ego": -2.91318958953525,
-          "distance": 5.714653238379221
-        },
-        {
-          "sample_token": "214326b2bca0478d85c9eb80f01f4ff1",
-          "sample_idx": 7,
-          "timestamp_us": 1533279927399474,
-          "x_ego": 1.1161629114682228,
-          "y_ego": -2.838457581380453,
-          "distance": 3.050026407464924
-        }
-      ],
-      "anchor_visibility": 2,
-      "min_distance_m": 3.05,
-      "min_ttc_s": 0.146,
-      "map_support": {
-        "available": true,
-        "actor_on_crosswalk_any": false,
-        "actor_on_walkway_any": false,
-        "actor_uses_ego_lane_any": false,
-        "shares_lane_at_anchor": false
-      },
-      "risk_facets": {
-        "distance_band": "near_range",
-        "ttc_band": "urgent_ttc",
-        "visibility_band": "low_visibility",
-        "map_relation": "opposite_direction_like",
-        "occlusion_proxy": "visibility_limited"
-      }
-    },
-    {
       "benchmark_group": "scenario_331fa27d969c420597348566ae423e15_388990067e0f4fabbae3b52d18282979",
       "reference_case_key": "331fa27d969c420597348566ae423e15:388990067e0f4fabbae3b52d18282979",
       "reference_scene_name": "scene-1061",
@@ -1095,103 +1079,6 @@
       }
     },
     {
-      "benchmark_group": "scenario_438abe26d0044fa6a1f3010ff7d0f501_45fdd058131d4b58beeb478819c31e44",
-      "reference_case_key": "438abe26d0044fa6a1f3010ff7d0f501:45fdd058131d4b58beeb478819c31e44",
-      "reference_scene_name": "scene-0395",
-      "scene_name": "scene-0395",
-      "scene_token": "dbfd4af0e0d744858e796ec69826e673",
-      "instance_token": "45fdd058131d4b58beeb478819c31e44",
-      "category_name": "vehicle.truck",
-      "category_group": "truck",
-      "location": "boston-seaport",
-      "primary_behavior": "stopped_lead",
-      "behaviors": [
-        "stopped_lead"
-      ],
-      "actors": [
-        "truck"
-      ],
-      "tags": [
-        "scenario_mining",
-        "canonical",
-        "stopped_lead",
-        "paraphrase"
-      ],
-      "source_query_ids": [
-        "scenario_438abe26d0044fa6a1f3010ff7d0f501_45fdd058131d4b58beeb478819c31e44_scenario_canonical",
-        "scenario_438abe26d0044fa6a1f3010ff7d0f501_45fdd058131d4b58beeb478819c31e44_scenario_paraphrase"
-      ],
-      "source_query_texts": [
-        "a stopped truck is blocking ego in lane ahead",
-        "the lead truck is stationary in ego lane"
-      ],
-      "anchor_sample_token": "438abe26d0044fa6a1f3010ff7d0f501",
-      "anchor_sample_idx": 8,
-      "event_start_sample_idx": 4,
-      "event_end_sample_idx": 8,
-      "event_peak_sample_idx": 8,
-      "frame_count": 5,
-      "frames": [
-        {
-          "sample_token": "e034b5c2f2d4420ea365ad9f91d2a203",
-          "sample_idx": 4,
-          "timestamp_us": 1535731300648275,
-          "x_ego": 13.294971519252897,
-          "y_ego": -3.154322436858422,
-          "distance": 13.664041046974871
-        },
-        {
-          "sample_token": "09c044e68f2045b7a8b7af206374c3bd",
-          "sample_idx": 5,
-          "timestamp_us": 1535731301198469,
-          "x_ego": 10.002526656868724,
-          "y_ego": -3.148356091918231,
-          "distance": 10.486309436731688
-        },
-        {
-          "sample_token": "76c2d1f11dd241b8b7a451ccc4dcd6d3",
-          "sample_idx": 6,
-          "timestamp_us": 1535731301698877,
-          "x_ego": 7.167381370753333,
-          "y_ego": -3.1572433429220723,
-          "distance": 7.83195641204978
-        },
-        {
-          "sample_token": "e7caf338fdb243f582308c59efea7fb4",
-          "sample_idx": 7,
-          "timestamp_us": 1535731302198761,
-          "x_ego": 4.3339503177215875,
-          "y_ego": -3.0952886849335073,
-          "distance": 5.325780449807938
-        },
-        {
-          "sample_token": "438abe26d0044fa6a1f3010ff7d0f501",
-          "sample_idx": 8,
-          "timestamp_us": 1535731302698652,
-          "x_ego": 1.7751498075523955,
-          "y_ego": -2.9987686086302574,
-          "distance": 3.484791243010054
-        }
-      ],
-      "anchor_visibility": 4,
-      "min_distance_m": 3.485,
-      "min_ttc_s": 0.351,
-      "map_support": {
-        "available": true,
-        "actor_on_crosswalk_any": false,
-        "actor_on_walkway_any": false,
-        "actor_uses_ego_lane_any": true,
-        "shares_lane_at_anchor": true
-      },
-      "risk_facets": {
-        "distance_band": "near_range",
-        "ttc_band": "urgent_ttc",
-        "visibility_band": "clear_visibility",
-        "map_relation": "shared_lane_supported",
-        "occlusion_proxy": "large_lead_occluder"
-      }
-    },
-    {
       "benchmark_group": "scenario_45224fd5dde34ac59d8682de6cc59ef2_4ac6acde2e544f26abed23596a78b118",
       "reference_case_key": "45224fd5dde34ac59d8682de6cc59ef2:4ac6acde2e544f26abed23596a78b118",
       "reference_scene_name": "scene-0026",
@@ -1294,6 +1181,119 @@
         "visibility_band": "clear_visibility",
         "map_relation": "shared_lane_supported",
         "occlusion_proxy": "nominal_exposure"
+      }
+    },
+    {
+      "benchmark_group": "scenario_4b933f6dceae4df59410d569beb37bfd_e5fb9bc8abdd4b72a526e1a025e15162",
+      "reference_case_key": "4b933f6dceae4df59410d569beb37bfd:e5fb9bc8abdd4b72a526e1a025e15162",
+      "reference_scene_name": "scene-0398",
+      "scene_name": "scene-0398",
+      "scene_token": "b519ec833e23450a8bd3340b67f2516b",
+      "instance_token": "e5fb9bc8abdd4b72a526e1a025e15162",
+      "category_name": "vehicle.bus.rigid",
+      "category_group": "bus",
+      "location": "boston-seaport",
+      "primary_behavior": "stopped_lead",
+      "behaviors": [
+        "stopped_lead"
+      ],
+      "actors": [
+        "bus"
+      ],
+      "tags": [
+        "scenario_mining",
+        "canonical",
+        "stopped_lead",
+        "paraphrase"
+      ],
+      "source_query_ids": [
+        "scenario_4b933f6dceae4df59410d569beb37bfd_e5fb9bc8abdd4b72a526e1a025e15162_scenario_canonical",
+        "scenario_4b933f6dceae4df59410d569beb37bfd_e5fb9bc8abdd4b72a526e1a025e15162_scenario_paraphrase"
+      ],
+      "source_query_texts": [
+        "a stopped bus is blocking ego in lane ahead",
+        "the lead bus is stationary in ego lane"
+      ],
+      "anchor_sample_token": "4b933f6dceae4df59410d569beb37bfd",
+      "anchor_sample_idx": 25,
+      "event_start_sample_idx": 23,
+      "event_end_sample_idx": 29,
+      "event_peak_sample_idx": 29,
+      "frame_count": 7,
+      "frames": [
+        {
+          "sample_token": "4e3a843b583f48b3bdd39859db01a47f",
+          "sample_idx": 23,
+          "timestamp_us": 1535731412896502,
+          "x_ego": 17.204617550998023,
+          "y_ego": -3.33702885285345,
+          "distance": 17.525256820968007
+        },
+        {
+          "sample_token": "648805fc7cc64aaea92f77876e2c6ed0",
+          "sample_idx": 24,
+          "timestamp_us": 1535731413395780,
+          "x_ego": 14.368855065388004,
+          "y_ego": -2.4443833287955385,
+          "distance": 14.575287501391527
+        },
+        {
+          "sample_token": "4b933f6dceae4df59410d569beb37bfd",
+          "sample_idx": 25,
+          "timestamp_us": 1535731413895239,
+          "x_ego": 11.76130524774004,
+          "y_ego": -2.2895085477676957,
+          "distance": 11.982076219120739
+        },
+        {
+          "sample_token": "ee06737eaacb4c1db2042e0a9601382b",
+          "sample_idx": 26,
+          "timestamp_us": 1535731414395528,
+          "x_ego": 9.248121832177276,
+          "y_ego": -2.5500268991810344,
+          "distance": 9.593247344321984
+        },
+        {
+          "sample_token": "d4d92e734bf54cc68d528d50500bb5e8",
+          "sample_idx": 27,
+          "timestamp_us": 1535731414895956,
+          "x_ego": 6.8221909394540035,
+          "y_ego": -3.0201219873010814,
+          "distance": 7.460792587423117
+        },
+        {
+          "sample_token": "755bc9b208e84c9c8024bcb962afb8b7",
+          "sample_idx": 28,
+          "timestamp_us": 1535731415396967,
+          "x_ego": 4.4450930361544465,
+          "y_ego": -3.346903688530972,
+          "distance": 5.564226487156232
+        },
+        {
+          "sample_token": "52f2da122cdf459a8dbb57278e3cdf25",
+          "sample_idx": 29,
+          "timestamp_us": 1535731415897916,
+          "x_ego": 2.180666950079626,
+          "y_ego": -3.43305105672664,
+          "distance": 4.0670810054954005
+        }
+      ],
+      "anchor_visibility": 4,
+      "min_distance_m": 4.067,
+      "min_ttc_s": 0.496,
+      "map_support": {
+        "available": true,
+        "actor_on_crosswalk_any": false,
+        "actor_on_walkway_any": false,
+        "actor_uses_ego_lane_any": true,
+        "shares_lane_at_anchor": true
+      },
+      "risk_facets": {
+        "distance_band": "near_range",
+        "ttc_band": "urgent_ttc",
+        "visibility_band": "clear_visibility",
+        "map_relation": "shared_lane_supported",
+        "occlusion_proxy": "large_lead_occluder"
       }
     },
     {
@@ -1766,79 +1766,71 @@
       }
     },
     {
-      "benchmark_group": "scenario_bc29c037a5b649b99f930cb4e6c4cdc6_cc567874ed8a43259879c87f080b3576",
-      "reference_case_key": "bc29c037a5b649b99f930cb4e6c4cdc6:cc567874ed8a43259879c87f080b3576",
-      "reference_scene_name": "scene-0196",
-      "scene_name": "scene-0196",
-      "scene_token": "6bb64043c9db4f51b7a69e7260ed4f6e",
-      "instance_token": "cc567874ed8a43259879c87f080b3576",
-      "category_name": "vehicle.bus.rigid",
-      "category_group": "bus",
-      "location": "singapore-onenorth",
-      "primary_behavior": "stopped_lead",
+      "benchmark_group": "scenario_94fc83c54c6f4f48acdca0b2c529c305_b78750237c66467b9cb4c24ec3c4398e",
+      "reference_case_key": "94fc83c54c6f4f48acdca0b2c529c305:b78750237c66467b9cb4c24ec3c4398e",
+      "reference_scene_name": "scene-0921",
+      "scene_name": "scene-0921",
+      "scene_token": "112ca771e318478a88cfa692f61ffcac",
+      "instance_token": "b78750237c66467b9cb4c24ec3c4398e",
+      "category_name": "vehicle.truck",
+      "category_group": "truck",
+      "location": "singapore-queenstown",
+      "primary_behavior": "cut_in",
       "behaviors": [
-        "stopped_lead"
+        "cut_in"
       ],
       "actors": [
-        "bus"
+        "truck"
       ],
       "tags": [
         "scenario_mining",
         "canonical",
-        "stopped_lead",
+        "cut_in",
         "paraphrase"
       ],
       "source_query_ids": [
-        "scenario_bc29c037a5b649b99f930cb4e6c4cdc6_cc567874ed8a43259879c87f080b3576_scenario_canonical",
-        "scenario_bc29c037a5b649b99f930cb4e6c4cdc6_cc567874ed8a43259879c87f080b3576_scenario_paraphrase"
+        "scenario_94fc83c54c6f4f48acdca0b2c529c305_b78750237c66467b9cb4c24ec3c4398e_scenario_canonical",
+        "scenario_94fc83c54c6f4f48acdca0b2c529c305_b78750237c66467b9cb4c24ec3c4398e_scenario_paraphrase"
       ],
       "source_query_texts": [
-        "a stopped bus is blocking ego in lane ahead",
-        "the lead bus is stationary in ego lane"
+        "a truck merges into ego lane from the right",
+        "a truck merges from the passenger side into ego lane"
       ],
-      "anchor_sample_token": "bc29c037a5b649b99f930cb4e6c4cdc6",
-      "anchor_sample_idx": 10,
-      "event_start_sample_idx": 8,
-      "event_end_sample_idx": 11,
-      "event_peak_sample_idx": 11,
-      "frame_count": 4,
+      "anchor_sample_token": "94fc83c54c6f4f48acdca0b2c529c305",
+      "anchor_sample_idx": 12,
+      "event_start_sample_idx": 11,
+      "event_end_sample_idx": 13,
+      "event_peak_sample_idx": 12,
+      "frame_count": 3,
       "frames": [
         {
-          "sample_token": "8f6b2d5ba5f04cf48c0785264e6113c3",
-          "sample_idx": 8,
-          "timestamp_us": 1533107909448179,
-          "x_ego": 14.785686353493304,
-          "y_ego": -1.7173460964266951,
-          "distance": 14.885086447810444
-        },
-        {
-          "sample_token": "85d4154a3c284031b2e024322d5d1254",
-          "sample_idx": 9,
-          "timestamp_us": 1533107909947489,
-          "x_ego": 10.74660163935846,
-          "y_ego": -2.406637492420714,
-          "distance": 11.012781247940367
-        },
-        {
-          "sample_token": "bc29c037a5b649b99f930cb4e6c4cdc6",
-          "sample_idx": 10,
-          "timestamp_us": 1533107910446254,
-          "x_ego": 6.536493419439125,
-          "y_ego": -2.989926027836532,
-          "distance": 7.187865042855585
-        },
-        {
-          "sample_token": "5115d45f9e5e4d91a66b5b0e80fdacab",
+          "sample_token": "ae572fa851ae494a8f9288e627db0be8",
           "sample_idx": 11,
-          "timestamp_us": 1533107910946685,
-          "x_ego": 2.49122761988815,
-          "y_ego": -3.2632249379230416,
-          "distance": 4.105466118429966
+          "timestamp_us": 1538984493947953,
+          "x_ego": 3.413745496877823,
+          "y_ego": -5.271822729464475,
+          "distance": 6.280587011446611
+        },
+        {
+          "sample_token": "022b90e4ad174f848690f010cc06f404",
+          "sample_idx": 12,
+          "timestamp_us": 1538984494448362,
+          "x_ego": 0.487334466111065,
+          "y_ego": -4.5503341047178765,
+          "distance": 4.576356121022314
+        },
+        {
+          "sample_token": "f6cb281807244d7f8043e73b66ccb5e1",
+          "sample_idx": 13,
+          "timestamp_us": 1538984494948261,
+          "x_ego": -2.6451521406827396,
+          "y_ego": -3.8950390706204416,
+          "distance": 4.708307467553307
         }
       ],
       "anchor_visibility": 4,
-      "min_distance_m": 4.105,
-      "min_ttc_s": 0.333,
+      "min_distance_m": 4.576,
+      "min_ttc_s": 0.08,
       "map_support": {
         "available": true,
         "actor_on_crosswalk_any": false,
@@ -1850,7 +1842,80 @@
         "distance_band": "near_range",
         "ttc_band": "urgent_ttc",
         "visibility_band": "clear_visibility",
-        "map_relation": "lead_lane_like",
+        "map_relation": "merge_like",
+        "occlusion_proxy": "large_actor"
+      }
+    },
+    {
+      "benchmark_group": "scenario_975986d3c8664be8818a5cae9bc30e09_648502c5aec244eeb801f677fce6a6c1",
+      "reference_case_key": "975986d3c8664be8818a5cae9bc30e09:648502c5aec244eeb801f677fce6a6c1",
+      "reference_scene_name": "scene-0058",
+      "scene_name": "scene-0058",
+      "scene_token": "9a1188aba4bf458c8220818a6c0be55a",
+      "instance_token": "648502c5aec244eeb801f677fce6a6c1",
+      "category_name": "vehicle.construction",
+      "category_group": "truck",
+      "location": "singapore-onenorth",
+      "primary_behavior": "stopped_lead",
+      "behaviors": [
+        "stopped_lead"
+      ],
+      "actors": [
+        "truck"
+      ],
+      "tags": [
+        "scenario_mining",
+        "canonical",
+        "stopped_lead",
+        "paraphrase"
+      ],
+      "source_query_ids": [
+        "scenario_975986d3c8664be8818a5cae9bc30e09_648502c5aec244eeb801f677fce6a6c1_scenario_canonical",
+        "scenario_975986d3c8664be8818a5cae9bc30e09_648502c5aec244eeb801f677fce6a6c1_scenario_paraphrase"
+      ],
+      "source_query_texts": [
+        "a stopped truck is blocking ego in lane ahead",
+        "the lead truck is stationary in ego lane"
+      ],
+      "anchor_sample_token": "975986d3c8664be8818a5cae9bc30e09",
+      "anchor_sample_idx": 22,
+      "event_start_sample_idx": 22,
+      "event_end_sample_idx": 23,
+      "event_peak_sample_idx": 23,
+      "frame_count": 2,
+      "frames": [
+        {
+          "sample_token": "975986d3c8664be8818a5cae9bc30e09",
+          "sample_idx": 22,
+          "timestamp_us": 1532402826546362,
+          "x_ego": 2.7888230493972515,
+          "y_ego": 2.9323518233077834,
+          "distance": 4.04675440526181
+        },
+        {
+          "sample_token": "f90fa768036b477ebe3fc81978e7ef63",
+          "sample_idx": 23,
+          "timestamp_us": 1532402827046230,
+          "x_ego": 0.6981319033345699,
+          "y_ego": 2.5226840481518025,
+          "distance": 2.617503192214503
+        }
+      ],
+      "anchor_visibility": 4,
+      "min_distance_m": 2.618,
+      "min_ttc_s": 0.12,
+      "map_support": {
+        "available": true,
+        "actor_on_crosswalk_any": false,
+        "actor_on_walkway_any": false,
+        "actor_uses_ego_lane_any": true,
+        "shares_lane_at_anchor": true
+      },
+      "risk_facets": {
+        "distance_band": "critical_range",
+        "ttc_band": "urgent_ttc",
+        "visibility_band": "clear_visibility",
+        "map_relation": "shared_lane_supported",
         "occlusion_proxy": "large_lead_occluder"
       }
     },
@@ -2062,103 +2127,6 @@
         "visibility_band": "clear_visibility",
         "map_relation": "crosswalk_supported",
         "occlusion_proxy": "crossing_emergence"
-      }
-    },
-    {
-      "benchmark_group": "scenario_d70f041998ca465991f1675a79483092_fba1f3467c45425599569a1a85f1d947",
-      "reference_case_key": "d70f041998ca465991f1675a79483092:fba1f3467c45425599569a1a85f1d947",
-      "reference_scene_name": "scene-1016",
-      "scene_name": "scene-1016",
-      "scene_token": "f0f7132494bc4045a21868aca13b56f9",
-      "instance_token": "fba1f3467c45425599569a1a85f1d947",
-      "category_name": "vehicle.bus.rigid",
-      "category_group": "bus",
-      "location": "singapore-queenstown",
-      "primary_behavior": "oncoming",
-      "behaviors": [
-        "oncoming"
-      ],
-      "actors": [
-        "bus"
-      ],
-      "tags": [
-        "scenario_mining",
-        "canonical",
-        "oncoming",
-        "paraphrase"
-      ],
-      "source_query_ids": [
-        "scenario_d70f041998ca465991f1675a79483092_fba1f3467c45425599569a1a85f1d947_scenario_canonical",
-        "scenario_d70f041998ca465991f1675a79483092_fba1f3467c45425599569a1a85f1d947_scenario_paraphrase"
-      ],
-      "source_query_texts": [
-        "an oncoming bus approaches ego in the same corridor",
-        "a bus approaches ego in the opposite direction"
-      ],
-      "anchor_sample_token": "d70f041998ca465991f1675a79483092",
-      "anchor_sample_idx": 38,
-      "event_start_sample_idx": 34,
-      "event_end_sample_idx": 38,
-      "event_peak_sample_idx": 38,
-      "frame_count": 5,
-      "frames": [
-        {
-          "sample_token": "8d1ed9c1fb74441faccdd8e21df736c2",
-          "sample_idx": 34,
-          "timestamp_us": 1542194052298269,
-          "x_ego": 20.561619063878055,
-          "y_ego": -4.698931164981161,
-          "distance": 21.091707674374415
-        },
-        {
-          "sample_token": "e2a80547fcf043749fbcead9c99d92b1",
-          "sample_idx": 35,
-          "timestamp_us": 1542194052798163,
-          "x_ego": 15.237990659993017,
-          "y_ego": -3.9579250811762563,
-          "distance": 15.743618716871877
-        },
-        {
-          "sample_token": "ecfc22d6eb9d487caed907fce92c3329",
-          "sample_idx": 36,
-          "timestamp_us": 1542194053298024,
-          "x_ego": 9.8811385112609,
-          "y_ego": -3.558809440711741,
-          "distance": 10.50247698945455
-        },
-        {
-          "sample_token": "0f5d7c42aa834d4ebf5b92ecd3472cc4",
-          "sample_idx": 37,
-          "timestamp_us": 1542194053697811,
-          "x_ego": 5.3995245910940355,
-          "y_ego": -3.4544336389791965,
-          "distance": 6.409990450534249
-        },
-        {
-          "sample_token": "d70f041998ca465991f1675a79483092",
-          "sample_idx": 38,
-          "timestamp_us": 1542194054147405,
-          "x_ego": 0.2559612415290644,
-          "y_ego": -3.447366032950981,
-          "distance": 3.456855322733262
-        }
-      ],
-      "anchor_visibility": 4,
-      "min_distance_m": 3.457,
-      "min_ttc_s": 0.021,
-      "map_support": {
-        "available": true,
-        "actor_on_crosswalk_any": false,
-        "actor_on_walkway_any": false,
-        "actor_uses_ego_lane_any": false,
-        "shares_lane_at_anchor": false
-      },
-      "risk_facets": {
-        "distance_band": "near_range",
-        "ttc_band": "urgent_ttc",
-        "visibility_band": "clear_visibility",
-        "map_relation": "opposite_direction_like",
-        "occlusion_proxy": "large_actor"
       }
     },
     {

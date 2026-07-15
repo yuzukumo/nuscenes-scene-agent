@@ -25,6 +25,7 @@ case_library_generation:
   llm:
     base_url: http://127.0.0.1:11434
     model: gemma4:latest
+    require_digest: true
 
 risk_benchmark_suite:
   db: artifacts/index/v1.0-trainval.sqlite
@@ -116,11 +117,11 @@ result_registry:
     - outputs/risk_benchmark_suite_v1/experiment_result.json
     - outputs/nuplan_replay_sweep_v1/nuplan_replay_sweep_summary.json
     - outputs/nuplan_closed_loop_sweep_v1/nuplan_closed_loop_sweep_summary.json
-    - outputs/bench2drive_vision_e2e_trajectory_transformer_final/training_report.json
-    - outputs/bench2drive_vision_e2e_trajectory_transformer_final/eval/evaluation_report.json
-    - outputs/bench2drive_vision_e2e_trajectory_transformer_final/diagnostics/planner_diagnostics_report.json
-    - outputs/bench2drive_vision_closed_loop_trajectory_transformer_final/closed_loop_report.json
-    - outputs/carla_semantic_demo_trajectory_transformer_final/carla_semantic_demo_mining_report.json
-    - outputs/carla_semantic_demo_trajectory_transformer_final/carla_semantic_demo_report.json
-    - outputs/carla_semantic_demo_trajectory_transformer_final/carla_semantic_demo_audit.json
+    - outputs/bench2drive_vision_e2e_final/training_report.json
+    - outputs/bench2drive_vision_e2e_final/eval_test/evaluation_report.json
+    - outputs/bench2drive_vision_e2e_final/diagnostics/planner_diagnostics_report.json
+    - outputs/bench2drive_vision_closed_loop_final/closed_loop_report.json
+    - outputs/carla_semantic_demo_final/carla_semantic_demo_mining_report.json
+    - outputs/carla_semantic_demo_final/carla_semantic_demo_report.json
+    - outputs/carla_semantic_demo_final/carla_semantic_demo_audit.json
     - outputs/model_in_the_loop_failure_mining_v1/failure_mining_report.json

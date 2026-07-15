@@ -30,8 +30,17 @@ from nusc_scene_agent.carla_closed_loop import PurePursuitConfig, pure_pursuit_c
 from nusc_scene_agent.geometry import normalize_angle
 
 
-DEFAULT_BENCH2DRIVE_CLOSED_LOOP_OUTPUT = Path("outputs/bench2drive_vision_closed_loop_trajectory_transformer_final")
+DEFAULT_BENCH2DRIVE_CLOSED_LOOP_OUTPUT = Path("outputs/bench2drive_vision_closed_loop_final")
 BENCH2DRIVE_CLOSED_LOOP_SCHEMA = "bench2drive_vision_closed_loop_v1"
+BENCH2DRIVE_CLOSED_LOOP_COMPARISON_SCHEMA = "bench2drive_vision_closed_loop_comparison_v1"
+
+CLOSED_LOOP_COMPARISON_METRICS = (
+    ("closed_loop_ade_m", "Closed-loop ADE", "lower"),
+    ("closed_loop_fde_m", "Closed-loop FDE", "lower"),
+    ("mean_lateral_error_m", "Mean lateral error", "lower"),
+    ("route_completion", "Route completion", "higher"),
+    ("closed_loop_score", "Closed-loop score", "higher"),
+)
 
 MAX_STEER_RAD = 0.65
 WHEEL_BASE_M = 2.85
@@ -65,6 +74,7 @@ def run_bench2drive_vision_closed_loop(
     image_size: int = 160,
     device: str = "",
     video_fps: int = 6,
+    render_case_media: bool = False,
     case_selection: str = "balanced",
     control_config: Optional[ClosedLoopControlConfig] = None,
 ) -> Dict[str, Any]:
@@ -82,7 +92,7 @@ def run_bench2drive_vision_closed_loop(
     if not cases:
         raise ValueError(f"No closed-loop cases found in {manifest_path} for split={split!r}")
 
-    checkpoint = torch.load(str(checkpoint_path), map_location="cpu")
+    checkpoint = torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
     model_config = VisionE2EModelConfig(**dict(checkpoint.get("model_config") or {}))
     model = _build_vision_e2e_model(model_config)
     model.load_state_dict(checkpoint["model_state_dict"])
@@ -102,7 +112,12 @@ def run_bench2drive_vision_closed_loop(
             config=config,
         )
         case_dir = output_dir / "cases" / report["case_id"]
-        media_outputs = _write_case_outputs(report, case_dir, video_fps=video_fps)
+        media_outputs = _write_case_outputs(
+            report,
+            case_dir,
+            video_fps=video_fps,
+            render_media=render_case_media,
+        )
         case_reports.append(
             {
                 **report["metrics"],
@@ -128,6 +143,7 @@ def run_bench2drive_vision_closed_loop(
         config=config,
         case_reports=case_reports,
         comparison=comparison,
+        render_case_media=render_case_media,
         runtime_s=time.time() - started_at,
     )
     return {
@@ -137,10 +153,296 @@ def run_bench2drive_vision_closed_loop(
         "checkpoint_path": str(checkpoint_path),
         "split": split,
         "case_selection": case_selection,
+        "render_case_media": bool(render_case_media),
         "case_count": len(case_reports),
         "comparison": comparison,
         "cases": case_reports,
     }
+
+
+def compare_bench2drive_closed_loop_reports(
+    baseline_report_path: Path,
+    candidate_report_path: Path,
+    output_dir: Path,
+    *,
+    baseline_label: str = "baseline",
+    candidate_label: str = "candidate",
+    seed: int = 7,
+    bootstrap_replicates: int = 5000,
+    allow_case_intersection: bool = False,
+) -> Dict[str, Any]:
+    """Compare two closed-loop reports on paired case IDs."""
+    import numpy as np
+
+    baseline_path = Path(baseline_report_path)
+    candidate_path = Path(candidate_report_path)
+    baseline = _read_closed_loop_report(baseline_path)
+    candidate = _read_closed_loop_report(candidate_path)
+    baseline_cases = _index_closed_loop_cases(baseline)
+    candidate_cases = _index_closed_loop_cases(candidate)
+    baseline_ids = set(baseline_cases)
+    candidate_ids = set(candidate_cases)
+    common_ids = sorted(baseline_ids & candidate_ids)
+    baseline_only = sorted(baseline_ids - candidate_ids)
+    candidate_only = sorted(candidate_ids - baseline_ids)
+    if not common_ids:
+        raise ValueError("Closed-loop reports do not share any case IDs.")
+    if (baseline_only or candidate_only) and not allow_case_intersection:
+        raise ValueError(
+            "Closed-loop reports use different case sets; pass allow_case_intersection=True "
+            "to compare only their intersection."
+        )
+
+    rng = np.random.default_rng(int(seed))
+    replicate_count = max(int(bootstrap_replicates), 1)
+    paired_rows: List[Dict[str, Any]] = []
+    for case_id in common_ids:
+        baseline_case = baseline_cases[case_id]
+        candidate_case = candidate_cases[case_id]
+        row: Dict[str, Any] = {
+            "case_id": case_id,
+            "scenario_family": str(
+                candidate_case.get("scenario_family")
+                or baseline_case.get("scenario_family")
+                or "unknown"
+            ),
+        }
+        for metric, _, direction in CLOSED_LOOP_COMPARISON_METRICS:
+            baseline_value = float(baseline_case.get(metric) or 0.0)
+            candidate_value = float(candidate_case.get(metric) or 0.0)
+            raw_delta = candidate_value - baseline_value
+            improvement = -raw_delta if direction == "lower" else raw_delta
+            row[f"baseline_{metric}"] = baseline_value
+            row[f"candidate_{metric}"] = candidate_value
+            row[f"improvement_{metric}"] = improvement
+        paired_rows.append(row)
+
+    metric_rows: List[Dict[str, Any]] = []
+    sample_count = len(paired_rows)
+    sample_indices = rng.integers(0, sample_count, size=(replicate_count, sample_count))
+    for metric, display_name, direction in CLOSED_LOOP_COMPARISON_METRICS:
+        baseline_values = np.asarray([row[f"baseline_{metric}"] for row in paired_rows], dtype=float)
+        candidate_values = np.asarray([row[f"candidate_{metric}"] for row in paired_rows], dtype=float)
+        finite = np.isfinite(baseline_values) & np.isfinite(candidate_values)
+        if not np.all(finite):
+            baseline_values = baseline_values[finite]
+            candidate_values = candidate_values[finite]
+            local_rng = np.random.default_rng(int(seed))
+            indices = local_rng.integers(
+                0,
+                len(baseline_values),
+                size=(replicate_count, len(baseline_values)),
+            )
+        else:
+            indices = sample_indices
+        raw_deltas = candidate_values - baseline_values
+        improvements = -raw_deltas if direction == "lower" else raw_deltas
+        bootstrap_improvements = np.mean(improvements[indices], axis=1)
+        ci_low, ci_high = np.percentile(bootstrap_improvements, [2.5, 97.5])
+        baseline_mean = float(np.mean(baseline_values))
+        candidate_mean = float(np.mean(candidate_values))
+        improvement = float(np.mean(improvements))
+        denominator = abs(baseline_mean)
+        relative_improvement = 100.0 * improvement / denominator if denominator > 1e-12 else None
+        relative_ci_low = 100.0 * float(ci_low) / denominator if denominator > 1e-12 else None
+        relative_ci_high = 100.0 * float(ci_high) / denominator if denominator > 1e-12 else None
+        metric_rows.append(
+            {
+                "metric": metric,
+                "display_name": display_name,
+                "direction": direction,
+                "case_count": int(len(baseline_values)),
+                "baseline_mean": round(baseline_mean, 6),
+                "candidate_mean": round(candidate_mean, 6),
+                "candidate_minus_baseline": round(float(np.mean(raw_deltas)), 6),
+                "oriented_improvement": round(improvement, 6),
+                "improvement_ci95_low": round(float(ci_low), 6),
+                "improvement_ci95_high": round(float(ci_high), 6),
+                "relative_improvement_pct": (
+                    None if relative_improvement is None else round(relative_improvement, 3)
+                ),
+                "relative_improvement_ci95_low_pct": (
+                    None if relative_ci_low is None else round(relative_ci_low, 3)
+                ),
+                "relative_improvement_ci95_high_pct": (
+                    None if relative_ci_high is None else round(relative_ci_high, 3)
+                ),
+                "candidate_win_rate": round(float(np.mean(improvements > 0.0)), 6),
+                "tie_rate": round(float(np.mean(np.isclose(improvements, 0.0))), 6),
+                "bootstrap_probability_of_improvement": round(
+                    float(np.mean(bootstrap_improvements > 0.0)),
+                    6,
+                ),
+                "ci95_excludes_zero": bool(ci_low > 0.0 or ci_high < 0.0),
+            }
+        )
+
+    payload = {
+        "schema": BENCH2DRIVE_CLOSED_LOOP_COMPARISON_SCHEMA,
+        "method": "paired case-level percentile bootstrap",
+        "baseline": {
+            "label": str(baseline_label),
+            "report_path": str(baseline_path),
+            "checkpoint_path": str(baseline.get("checkpoint_path") or ""),
+        },
+        "candidate": {
+            "label": str(candidate_label),
+            "report_path": str(candidate_path),
+            "checkpoint_path": str(candidate.get("checkpoint_path") or ""),
+        },
+        "case_alignment": {
+            "paired_case_count": len(common_ids),
+            "identical_case_sets": not baseline_only and not candidate_only,
+            "baseline_only_case_ids": baseline_only,
+            "candidate_only_case_ids": candidate_only,
+        },
+        "bootstrap": {
+            "seed": int(seed),
+            "replicates": replicate_count,
+        },
+        "metrics": metric_rows,
+        "scenario_family_breakdown": _paired_scenario_family_breakdown(paired_rows),
+        "paired_cases": paired_rows,
+    }
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "closed_loop_comparison.json").write_text(
+        json.dumps(payload, indent=2),
+        encoding="utf-8",
+    )
+    _write_mapping_csv(metric_rows, output_dir / "closed_loop_comparison.csv")
+    _write_mapping_csv(paired_rows, output_dir / "closed_loop_paired_cases.csv")
+    (output_dir / "closed_loop_comparison.md").write_text(
+        _render_paired_comparison_markdown(payload),
+        encoding="utf-8",
+    )
+    _render_paired_comparison_figure(metric_rows, output_dir / "closed_loop_comparison.png")
+    return payload
+
+
+def _read_closed_loop_report(path: Path) -> Dict[str, Any]:
+    if not Path(path).exists():
+        raise FileNotFoundError(f"Closed-loop report does not exist: {path}")
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if str(payload.get("schema") or "") != BENCH2DRIVE_CLOSED_LOOP_SCHEMA:
+        raise ValueError(f"Unsupported closed-loop report schema in {path}: {payload.get('schema')}")
+    return payload
+
+
+def _index_closed_loop_cases(report: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
+    indexed: Dict[str, Dict[str, Any]] = {}
+    for raw_case in list(report.get("cases") or []):
+        case = dict(raw_case)
+        case_id = str(case.get("case_id") or "")
+        if not case_id:
+            raise ValueError("Closed-loop report contains a case without a case_id.")
+        if case_id in indexed:
+            raise ValueError(f"Closed-loop report contains duplicate case_id: {case_id}")
+        indexed[case_id] = case
+    return indexed
+
+
+def _paired_scenario_family_breakdown(rows: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    grouped: Dict[str, List[Mapping[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(str(row.get("scenario_family") or "unknown"), []).append(row)
+    output: Dict[str, Any] = {}
+    for family, family_rows in sorted(grouped.items()):
+        output[family] = {
+            "case_count": len(family_rows),
+            "closed_loop_ade_improvement_m": round(
+                mean(float(row["improvement_closed_loop_ade_m"]) for row in family_rows),
+                6,
+            ),
+            "route_completion_improvement": round(
+                mean(float(row["improvement_route_completion"]) for row in family_rows),
+                6,
+            ),
+            "closed_loop_score_improvement": round(
+                mean(float(row["improvement_closed_loop_score"]) for row in family_rows),
+                6,
+            ),
+        }
+    return output
+
+
+def _write_mapping_csv(rows: Sequence[Mapping[str, Any]], output_path: Path) -> None:
+    if not rows:
+        Path(output_path).write_text("", encoding="utf-8")
+        return
+    fieldnames = list(rows[0].keys())
+    with Path(output_path).open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows({key: row.get(key, "") for key in fieldnames} for row in rows)
+
+
+def _render_paired_comparison_markdown(payload: Mapping[str, Any]) -> str:
+    alignment = dict(payload.get("case_alignment") or {})
+    bootstrap = dict(payload.get("bootstrap") or {})
+    baseline = dict(payload.get("baseline") or {})
+    candidate = dict(payload.get("candidate") or {})
+    lines = [
+        "# Bench2Drive Closed-Loop Paired Comparison",
+        "",
+        f"- Baseline: `{baseline.get('label', '')}`",
+        f"- Candidate: `{candidate.get('label', '')}`",
+        f"- Paired cases: `{alignment.get('paired_case_count', 0)}`",
+        f"- Identical case sets: `{alignment.get('identical_case_sets', False)}`",
+        f"- Bootstrap replicates: `{bootstrap.get('replicates', 0)}`",
+        "",
+        "Positive improvement values favor the candidate. Confidence intervals are paired by case ID.",
+        "",
+        "| Metric | Baseline | Candidate | Improvement | 95% CI | Relative | Win Rate |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in list(payload.get("metrics") or []):
+        relative = row.get("relative_improvement_pct")
+        relative_text = "n/a" if relative is None else f"{float(relative):.2f}%"
+        lines.append(
+            "| {name} | {baseline:.3f} | {candidate:.3f} | {improvement:.3f} | "
+            "[{low:.3f}, {high:.3f}] | {relative} | {win:.3f} |".format(
+                name=row.get("display_name", row.get("metric", "")),
+                baseline=float(row.get("baseline_mean") or 0.0),
+                candidate=float(row.get("candidate_mean") or 0.0),
+                improvement=float(row.get("oriented_improvement") or 0.0),
+                low=float(row.get("improvement_ci95_low") or 0.0),
+                high=float(row.get("improvement_ci95_high") or 0.0),
+                relative=relative_text,
+                win=float(row.get("candidate_win_rate") or 0.0),
+            )
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _render_paired_comparison_figure(rows: Sequence[Mapping[str, Any]], output_path: Path) -> None:
+    plot_rows = [row for row in rows if row.get("relative_improvement_pct") is not None]
+    labels = [str(row.get("display_name") or row.get("metric") or "") for row in plot_rows]
+    values = [float(row["relative_improvement_pct"]) for row in plot_rows]
+    lows = [float(row["relative_improvement_ci95_low_pct"]) for row in plot_rows]
+    highs = [float(row["relative_improvement_ci95_high_pct"]) for row in plot_rows]
+    errors = [
+        [max(value - low, 0.0) for value, low in zip(values, lows)],
+        [max(high - value, 0.0) for value, high in zip(values, highs)],
+    ]
+    colors = ["#26734d" if value >= 0.0 else "#b24a3b" for value in values]
+    fig, ax = plt.subplots(figsize=(8.2, 4.4), dpi=180)
+    positions = list(range(len(plot_rows)))
+    ax.barh(positions, values, xerr=errors, color=colors, alpha=0.9, capsize=3)
+    ax.axvline(0.0, color="#222222", linewidth=0.9)
+    ax.set_yticks(positions, labels)
+    ax.invert_yaxis()
+    ax.set_xlabel("Candidate improvement over baseline (%)")
+    ax.set_title("Bench2Drive paired closed-loop comparison")
+    ax.grid(axis="x", alpha=0.22)
+    for position, value in zip(positions, values):
+        offset = 0.7 if value >= 0.0 else -0.7
+        alignment = "left" if value >= 0.0 else "right"
+        ax.text(value + offset, position, f"{value:+.1f}%", va="center", ha=alignment, fontsize=8)
+    fig.tight_layout()
+    fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
 
 
 def _load_closed_loop_rows(manifest_path: Path, *, split: str) -> List[Dict[str, Any]]:
@@ -238,22 +540,27 @@ def _run_closed_loop_case(
     dataset = _Bench2DriveVisionDataset(case_rows, image_size=int(image_size))
     previous_accel = 0.0
     max_steps = min(len(case_rows), max(int(config.horizon_s / max(config.dt_s, 1e-6)), 1))
+    samples = [dataset[step_idx] for step_idx in range(max_steps)]
+    inference_batch = {
+        "images": torch.stack([sample["images"] for sample in samples], dim=0),
+        "route": torch.stack([sample["route"] for sample in samples], dim=0),
+        "future": torch.stack([sample["future"] for sample in samples], dim=0),
+        "control": torch.stack([sample["control"] for sample in samples], dim=0),
+        "brake": torch.stack([sample["brake"] for sample in samples], dim=0),
+    }
     with torch.no_grad():
+        # The logged image and route inputs are fixed for this replay clip. Batch
+        # the visual forward pass, then keep vehicle-state integration sequential.
+        images, route, _, _, _ = _batch_to_device(inference_batch, device)
+        predictions = model(images, route)
+        future_batch = predictions["future"].detach().cpu().reshape(max_steps, -1, 2)
+        control_batch = predictions["control"].detach().cpu().reshape(max_steps, -1)
+        brake_batch = torch.sigmoid(predictions["brake_logits"]).detach().cpu().reshape(max_steps, -1)
         for step_idx in range(max_steps):
             row = dict(case_rows[step_idx])
-            sample = dataset[step_idx]
-            batch = {
-                "images": sample["images"].unsqueeze(0),
-                "route": sample["route"].unsqueeze(0),
-                "future": sample["future"].unsqueeze(0),
-                "control": sample["control"].unsqueeze(0),
-                "brake": sample["brake"].unsqueeze(0),
-            }
-            images, route, _, _, _ = _batch_to_device(batch, device)
-            prediction = model(images, route)
-            pred_waypoints = prediction["future"].detach().cpu().reshape(-1, 2).tolist()
-            pred_control = prediction["control"].detach().cpu().reshape(-1).tolist()
-            brake_prob = float(torch.sigmoid(prediction["brake_logits"]).detach().cpu().reshape(-1)[0])
+            pred_waypoints = future_batch[step_idx].tolist()
+            pred_control = control_batch[step_idx].tolist()
+            brake_prob = float(brake_batch[step_idx, 0])
             target_speed = _target_speed_from_prediction(pred_waypoints, brake_prob, config)
             control = _control_from_predicted_waypoints(
                 state,
@@ -647,13 +954,21 @@ def _scenario_family_breakdown(case_reports: Sequence[Mapping[str, Any]]) -> Dic
     }
 
 
-def _write_case_outputs(report: Mapping[str, Any], output_dir: Path, *, video_fps: int) -> Dict[str, str]:
+def _write_case_outputs(
+    report: Mapping[str, Any],
+    output_dir: Path,
+    *,
+    video_fps: int,
+    render_media: bool,
+) -> Dict[str, str]:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "closed_loop_case.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     _write_case_csv(report, output_dir / "closed_loop_states.csv")
     _render_case_rollout_figure(report, output_dir / "closed_loop_rollout.png")
-    return _render_case_rollout_video(report, output_dir / "closed_loop_rollout.mp4", fps=video_fps)
+    if render_media:
+        return _render_case_rollout_video(report, output_dir / "closed_loop_rollout.mp4", fps=video_fps)
+    return {"video_path": "", "gif_path": "", "media_path": ""}
 
 
 def _write_case_csv(report: Mapping[str, Any], output_path: Path) -> None:
@@ -712,6 +1027,7 @@ def _render_case_rollout_figure(report: Mapping[str, Any], output_path: Path) ->
 
 def _render_case_rollout_video(report: Mapping[str, Any], output_path: Path, *, fps: int) -> Dict[str, str]:
     output_path = Path(output_path)
+    output_path.unlink(missing_ok=True)
     try:
         import imageio.v2 as imageio
     except Exception:
@@ -724,6 +1040,12 @@ def _render_case_rollout_video(report: Mapping[str, Any], output_path: Path, *, 
     try:
         imageio.mimsave(str(output_path), frames, fps=max(int(fps), 1), macro_block_size=8)
     except Exception:
+        output_path.unlink(missing_ok=True)
+        gif_path = output_path.with_suffix(".gif")
+        _render_case_rollout_gif(report, gif_path, fps=fps)
+        return _media_result(output_path, gif_path)
+    if not _is_valid_media_file(output_path):
+        output_path.unlink(missing_ok=True)
         gif_path = output_path.with_suffix(".gif")
         _render_case_rollout_gif(report, gif_path, fps=fps)
     return _media_result(output_path, output_path.with_suffix(".gif"))
@@ -762,12 +1084,19 @@ def _save_frames_as_gif_with_pillow(frames: Sequence[Any], output_path: Path, *,
 def _media_result(video_path: Path, gif_path: Path) -> Dict[str, str]:
     video_path = Path(video_path)
     gif_path = Path(gif_path)
-    media_path = video_path if video_path.exists() else gif_path if gif_path.exists() else Path("")
+    video_valid = _is_valid_media_file(video_path)
+    gif_valid = _is_valid_media_file(gif_path)
+    media_path = video_path if video_valid else gif_path if gif_valid else Path("")
     return {
-        "video_path": str(video_path) if video_path.exists() else "",
-        "gif_path": str(gif_path) if gif_path.exists() else "",
+        "video_path": str(video_path) if video_valid else "",
+        "gif_path": str(gif_path) if gif_valid else "",
         "media_path": str(media_path) if str(media_path) else "",
     }
+
+
+def _is_valid_media_file(path: Path, *, minimum_size_bytes: int = 1024) -> bool:
+    path = Path(path)
+    return path.is_file() and path.stat().st_size >= int(minimum_size_bytes)
 
 
 def _render_case_video_frames(report: Mapping[str, Any]) -> List[Any]:
@@ -824,6 +1153,7 @@ def _write_closed_loop_outputs(
     config: ClosedLoopControlConfig,
     case_reports: Sequence[Mapping[str, Any]],
     comparison: Mapping[str, Any],
+    render_case_media: bool,
     runtime_s: float,
 ) -> None:
     payload = {
@@ -836,6 +1166,7 @@ def _write_closed_loop_outputs(
         "device": device,
         "control_config": dict(config.__dict__),
         "case_count": len(case_reports),
+        "render_case_media": bool(render_case_media),
         "comparison": comparison,
         "cases": list(case_reports),
         "runtime_s": round(float(runtime_s), 3),
@@ -895,7 +1226,7 @@ def _render_closed_loop_markdown(payload: Mapping[str, Any]) -> str:
         "mean_closed_loop_score",
     ]:
         lines.append(f"| `{key}` | `{_format_float(metrics.get(key))}` |")
-    lines.extend(["", "| Case | Scenario | ADE | Completion | Score | Media |", "| --- | --- | ---: | ---: | ---: | --- |"])
+    lines.extend(["", "| Case | Scenario | ADE | Completion | Closed-Loop Score | Media |", "| --- | --- | ---: | ---: | ---: | --- |"])
     for row in payload.get("cases", []):
         lines.append(
             "| `{0}` | `{1}` | `{2}` | `{3}` | `{4}` | `{5}` |".format(

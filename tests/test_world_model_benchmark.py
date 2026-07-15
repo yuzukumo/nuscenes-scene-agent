@@ -354,6 +354,14 @@ class WorldModelBenchmarkTest(unittest.TestCase):
             comparison = json.loads((comparison_output / "world_model_comparison.json").read_text(encoding="utf-8"))
             self.assertEqual(comparison["profiles"][0]["name"], "oracle_rollout")
             self.assertTrue(comparison["track_matrix"])
+            self.assertEqual(comparison["overview"]["common_case_count"], 1)
+            self.assertEqual(comparison["overview"]["comparison_basis"], "common_case_intersection")
+            self.assertEqual(comparison["common_case_summary"][0]["case_count"], 1)
+            self.assertEqual(comparison["profiles"][0]["case_count"], 1)
+            self.assertTrue(comparison["full_set_profiles"])
+            self.assertEqual(comparison["overview"]["bootstrap_replicates"], 5000)
+            self.assertTrue(comparison["common_case_summary"][0]["uncertainty"])
+            self.assertTrue(comparison["paired_profile_comparisons"])
             self.assertGreater(
                 comparison["profiles"][0]["mean_risk_fidelity_score"],
                 comparison["profiles"][1]["mean_risk_fidelity_score"],

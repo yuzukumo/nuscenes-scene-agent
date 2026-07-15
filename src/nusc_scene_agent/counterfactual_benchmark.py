@@ -8,6 +8,7 @@ from typing import Dict, List, Sequence, Tuple
 import yaml
 
 from nusc_scene_agent.query_parser import parse_query
+from nusc_scene_agent.score_semantics import get_validation_quality_score
 
 
 ALTERNATE_ACTORS = {
@@ -259,7 +260,7 @@ def _diverse_anchor_entries(entries: Sequence[Dict[str, object]], max_cases: int
     for entry in passed_entries:
         semantics = _case_semantics(entry)
         score = (
-            float(entry.get("validation_score") or 0.0),
+            get_validation_quality_score(entry),
             len(entry.get("source_query_ids") or []),
             -float(entry.get("min_distance_m") or 999.0),
         )

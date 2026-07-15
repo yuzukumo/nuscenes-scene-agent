@@ -7,6 +7,8 @@ from typing import Dict, List, Optional, Sequence
 
 from jinja2 import Template
 
+from nusc_scene_agent.score_semantics import get_best_validation_quality_score, get_validation_quality_score
+
 
 BENCHMARK_GALLERY_TEMPLATE = Template(
     """
@@ -230,7 +232,7 @@ BENCHMARK_GALLERY_TEMPLATE = Template(
             <div class="meta">{{ card.query_id }} | {{ card.description }}</div>
           </div>
           <div>
-            <span class="badge {{ 'badge-pass' if card.pass_at_1 else 'badge-fail' }}">{{ "pass@1" if card.pass_at_1 else "top-1 fail" }}</span>
+            <span class="badge {{ 'badge-pass' if card.pass_at_1 else 'badge-fail' }}">{{ "accepted@1" if card.pass_at_1 else "top-1 rejected" }}</span>
             {% if card.reference_mismatch %}
             <span class="badge badge-ref">ref mismatch</span>
             {% endif %}
@@ -246,7 +248,7 @@ BENCHMARK_GALLERY_TEMPLATE = Template(
         <div class="stats">
           <div><strong>Scene</strong><br />{{ card.scene_name }} / sample {{ card.sample_idx }}</div>
           <div><strong>Actor</strong><br />{{ card.actor_name }}</div>
-          <div><strong>Score</strong><br />{{ "%.2f"|format(card.validation_score) }}</div>
+          <div><strong>Validation quality</strong><br />{{ "%.2f"|format(card.validation_quality_score) }}</div>
           <div><strong>Distance / TTC</strong><br />{{ "%.2f"|format(card.min_distance_m) }} m / {{ "%.2f"|format(card.min_ttc_s) }} s</div>
           <div><strong>Scene@1 / Actor@1</strong><br />{{ card.scene_objective_at_1 }} / {{ card.actor_objective_at_1 }}</div>
           <div><strong>Event IoU / Peak Error</strong><br />{{ card.event_iou_text }} / {{ card.peak_error_text }}</div>
@@ -592,7 +594,7 @@ COMPARISON_BROWSER_TEMPLATE = Template(
             <div class="stats">
               <div><strong>Scene</strong><br />{{ profile.scene_name }} / sample {{ profile.sample_idx }}</div>
               <div><strong>Actor</strong><br />{{ profile.actor_name }}</div>
-              <div><strong>Score</strong><br />{{ "%.2f"|format(profile.validation_score) }}</div>
+              <div><strong>Validation quality</strong><br />{{ "%.2f"|format(profile.validation_quality_score) }}</div>
               <div><strong>Distance / TTC</strong><br />{{ "%.2f"|format(profile.min_distance_m) }} m / {{ "%.2f"|format(profile.min_ttc_s) }} s</div>
               <div><strong>Scene@1 / Actor@1</strong><br />{{ profile.scene_objective_at_1 }} / {{ profile.actor_objective_at_1 }}</div>
               <div><strong>Event IoU / Peak Error</strong><br />{{ profile.event_iou_text }} / {{ profile.peak_error_text }}</div>
@@ -694,6 +696,7 @@ def _case_preview(query_dir: Path, base_dir: Path) -> Dict[str, object]:
         "scene_name": "unknown",
         "sample_idx": -1,
         "actor_name": "unknown",
+        "validation_quality_score": 0.0,
         "validation_score": 0.0,
         "passed": False,
         "min_distance_m": 0.0,
@@ -738,7 +741,9 @@ def _case_preview(query_dir: Path, base_dir: Path) -> Dict[str, object]:
             "scene_name": str(candidate.get("scene_name") or "unknown"),
             "sample_idx": _safe_int(candidate.get("sample_idx"), -1),
             "actor_name": str(candidate.get("category_name") or "unknown"),
-            "validation_score": _safe_float(data.get("validation_score")),
+            "validation_quality_score": get_validation_quality_score(data),
+            # Backward-compatible alias for callers that consume old gallery JSON.
+            "validation_score": get_validation_quality_score(data),
             "passed": bool(data.get("passed")),
             "min_distance_m": _safe_float(evidence.get("min_distance_m")),
             "min_ttc_s": _safe_float(evidence.get("min_ttc_s")),
@@ -794,7 +799,8 @@ def build_benchmark_gallery(
                 "scene_name": str(preview["scene_name"]),
                 "sample_idx": int(preview["sample_idx"]),
                 "actor_name": str(preview["actor_name"]),
-                "validation_score": float(preview["validation_score"]),
+                "validation_quality_score": float(preview["validation_quality_score"]),
+                "validation_score": float(preview["validation_quality_score"]),
                 "min_distance_m": float(preview["min_distance_m"]),
                 "min_ttc_s": float(preview["min_ttc_s"]),
                 "pass_at_1": bool(query_metric.get("pass_at_1", preview["passed"])),
@@ -930,7 +936,12 @@ def build_comparison_browser(
                     "scene_name": str(preview["scene_name"]),
                     "sample_idx": int(preview["sample_idx"]),
                     "actor_name": str(preview["actor_name"]),
-                    "validation_score": float(metrics.get("best_validation_score") or preview["validation_score"]),
+                    "validation_quality_score": get_best_validation_quality_score(
+                        metrics, default=float(preview["validation_quality_score"])
+                    ),
+                    "validation_score": get_best_validation_quality_score(
+                        metrics, default=float(preview["validation_quality_score"])
+                    ),
                     "min_distance_m": float(preview["min_distance_m"]),
                     "min_ttc_s": float(preview["min_ttc_s"]),
                     "scene_objective_at_1": metrics.get("scene_objective_at_1"),

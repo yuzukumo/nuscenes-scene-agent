@@ -1,19 +1,20 @@
 experiment:
   id: bench2drive_vision_closed_loop
   type: bench2drive_vision_closed_loop
-  output: outputs/bench2drive_vision_closed_loop_trajectory_transformer_final
-  result_path: outputs/bench2drive_vision_closed_loop_trajectory_transformer_final/experiment_result.json
+  output: outputs/bench2drive_vision_closed_loop_final
+  result_path: outputs/bench2drive_vision_closed_loop_final/experiment_result.json
 
 bench2drive_vision_closed_loop:
   manifest: artifacts/bench2drive/vision_e2e_manifest_tensor_160.jsonl
-  checkpoint: outputs/bench2drive_vision_e2e_trajectory_transformer_final/vision_e2e_planner_best.pt
-  output: outputs/bench2drive_vision_closed_loop_trajectory_transformer_final
-  split: val
+  checkpoint: outputs/bench2drive_vision_e2e_final/vision_e2e_planner_calibrated.pt
+  output: outputs/bench2drive_vision_closed_loop_final
+  split: test
   max_cases: 64
   max_frames_per_clip: 20
   image_size: 160
   device: cuda
   video_fps: 6
+  render_case_media: false
   case_selection: balanced
   dt_s: 0.5
   horizon_s: 10.0

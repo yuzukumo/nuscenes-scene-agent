@@ -39,6 +39,7 @@ SUMMARY_TEMPLATE = Template(
     <tbody>
       <tr><th>Mode</th><td>{{ agent_trace.mode }}</td></tr>
       <tr><th>Selected Hypothesis</th><td>{{ agent_trace.selected_hypothesis }}</td></tr>
+      <tr><th>Retrieval Score Profile</th><td>{{ agent_trace.retrieval_score_profile }}</td></tr>
       <tr><th>Selection Policy</th><td>{{ agent_trace.selection_policy }}</td></tr>
     </tbody>
   </table>
@@ -51,7 +52,7 @@ SUMMARY_TEMPLATE = Template(
         <th>Positions</th>
         <th>Behaviors</th>
         <th>Passed</th>
-        <th>Best Score</th>
+        <th>Best Validation Quality</th>
       </tr>
     </thead>
     <tbody>
@@ -63,7 +64,7 @@ SUMMARY_TEMPLATE = Template(
         <td>{{ ", ".join(trace_row.query.positions) or "none" }}</td>
         <td>{{ ", ".join(trace_row.query.behaviors) or "none" }}</td>
         <td>{{ trace_row.passed_count }}</td>
-        <td>{{ "%.2f"|format(trace_row.best_validation_score) }}</td>
+        <td>{{ "%.2f"|format(trace_row.best_validation_quality_score) }}</td>
       </tr>
     {% endfor %}
     </tbody>
@@ -77,7 +78,7 @@ SUMMARY_TEMPLATE = Template(
         <th>Sample</th>
         <th>Actor</th>
         <th>Passed</th>
-        <th>Score</th>
+        <th>Validation Quality</th>
         <th>Min Distance</th>
         <th>Case</th>
       </tr>
@@ -90,7 +91,7 @@ SUMMARY_TEMPLATE = Template(
         <td>{{ row.sample_idx }}</td>
         <td>{{ row.actor }}</td>
         <td>{{ row.passed }}</td>
-        <td>{{ "%.2f"|format(row.validation_score) }}</td>
+        <td>{{ "%.2f"|format(row.validation_quality_score) }}</td>
         <td>{{ "%.2f"|format(row.min_distance_m) }}</td>
         <td><a href="{{ row.case_dir }}/case.md">case.md</a></td>
       </tr>
@@ -107,6 +108,24 @@ def slugify(text: str) -> str:
     slug = re.sub(r"[^\w\u4e00-\u9fff]+", "_", text.strip().lower())
     slug = re.sub(r"_+", "_", slug).strip("_")
     return slug or "query"
+
+
+def _normalize_agent_trace(agent_trace: Optional[Dict[str, object]]) -> Optional[Dict[str, object]]:
+    """Add canonical quality fields while preserving trace compatibility."""
+    if not agent_trace:
+        return agent_trace
+    normalized = dict(agent_trace)
+    hypotheses = []
+    for raw_item in list(agent_trace.get("hypotheses") or []):
+        item = dict(raw_item)
+        quality = item.get("best_validation_quality_score")
+        if quality is None:
+            quality = item.get("best_validation_score", 0.0)
+        item["best_validation_quality_score"] = float(quality or 0.0)
+        item.setdefault("best_validation_score", item["best_validation_quality_score"])
+        hypotheses.append(item)
+    normalized["hypotheses"] = hypotheses
+    return normalized
 
 
 def _json_safe(value):
@@ -132,9 +151,10 @@ def _render_agent_trace_markdown(agent_trace: Optional[Dict[str, object]]) -> Li
         "",
         "- Mode: {0}".format(agent_trace.get("mode", "unknown")),
         "- Selected hypothesis: {0}".format(agent_trace.get("selected_hypothesis", "unknown")),
+        "- Retrieval score profile: {0}".format(agent_trace.get("retrieval_score_profile", "unknown")),
         "- Selection policy: {0}".format(agent_trace.get("selection_policy", "")),
         "",
-        "| Hypothesis | Selected | Actors | Positions | Behaviors | Passed | Best Score |",
+        "| Hypothesis | Selected | Actors | Positions | Behaviors | Passed | Best Validation Quality |",
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for item in agent_trace.get("hypotheses") or []:
@@ -147,7 +167,12 @@ def _render_agent_trace_markdown(agent_trace: Optional[Dict[str, object]]) -> Li
                 ", ".join(query_payload.get("positions") or []) or "none",
                 ", ".join(query_payload.get("behaviors") or []) or "none",
                 item.get("passed_count", 0),
-                float(item.get("best_validation_score") or 0.0),
+                float(
+                    item.get("best_validation_quality_score")
+                    if item.get("best_validation_quality_score") is not None
+                    else item.get("best_validation_score")
+                    or 0.0
+                ),
             )
         )
     lines.append("")
@@ -166,8 +191,9 @@ def _render_case_markdown(
         "- Scene: {0}".format(case.candidate.scene_name),
         "- Sample Index: {0}".format(case.candidate.sample_idx),
         "- Actor: {0}".format(case.candidate.category_name),
-        "- Validation Score: {0:.2f}".format(case.validation_score),
-        "- Passed: {0}".format(case.passed),
+        "- Validation Quality Score: {0:.2f}".format(case.validation_quality_score),
+        "- Validation Gate: {0}".format(case.gate_decision.get("status", "pass" if case.passed else "fail")),
+        "- Gate Score: {0:.3f}".format(case.gate_score),
         "",
         "## Evidence",
         "",
@@ -244,6 +270,7 @@ def write_query_report(
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     rows: List[Dict[str, object]] = []
+    agent_trace = _normalize_agent_trace(agent_trace)
 
     if agent_trace:
         (output_dir / "query_trace.json").write_text(
@@ -278,7 +305,9 @@ def write_query_report(
                 "sample_idx": case.candidate.sample_idx,
                 "actor": case.candidate.category_name,
                 "passed": case.passed,
-                "validation_score": case.validation_score,
+                "validation_quality_score": case.validation_quality_score,
+                # Keep the legacy row key for consumers of existing reports.
+                "validation_score": case.validation_quality_score,
                 "min_distance_m": case.evidence.get("min_distance_m", 0.0),
                 "case_dir": case_dir.name,
             }
@@ -294,13 +323,13 @@ def write_query_report(
     summary_md.extend(_render_agent_trace_markdown(agent_trace))
     summary_md.extend(
         [
-            "| Rank | Scene | Sample | Actor | Passed | Score | Min Distance |",
+            "| Rank | Scene | Sample | Actor | Passed | Quality | Min Distance |",
             "| --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     for row in rows:
         summary_md.append(
-            "| {rank} | {scene_name} | {sample_idx} | {actor} | {passed} | {validation_score:.2f} | {min_distance_m:.2f} |".format(
+            "| {rank} | {scene_name} | {sample_idx} | {actor} | {passed} | {validation_quality_score:.2f} | {min_distance_m:.2f} |".format(
                 **row
             )
         )

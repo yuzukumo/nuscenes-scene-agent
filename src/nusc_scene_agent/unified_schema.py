@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Sequence
 
+from nusc_scene_agent.scenario_taxonomy import map_scenario_labels
+
 
 UNIFIED_CASE_SCHEMA = "unified_risk_case_v1"
 UNIFIED_COLLECTION_SCHEMA = "unified_risk_case_collection_v1"
@@ -68,6 +70,8 @@ def write_unified_case_collection(
 
 def unified_case_from_nuplan_replay(case: Mapping[str, Any]) -> UnifiedRiskCase:
     scenario_tag = str(case.get("scenario_tag") or "")
+    native_family = str(case.get("scenario_family") or "")
+    taxonomy_mapping = map_scenario_labels("nuplan", [scenario_tag, native_family])
     actors = []
     anchor_actor = dict(case.get("anchor_frame", {}).get("primary_actor") or {})
     if anchor_actor:
@@ -98,7 +102,7 @@ def unified_case_from_nuplan_replay(case: Mapping[str, Any]) -> UnifiedRiskCase:
             "scene_name": case.get("scene_name", ""),
             "anchor_lidar_pc_token": case.get("anchor_lidar_pc_token", ""),
         },
-        scenario_family=str(case.get("scenario_family") or "unknown"),
+        scenario_family=(taxonomy_mapping["family_ids"] or [native_family or "unmapped"])[0],
         scenario_tags=[scenario_tag] if scenario_tag else [],
         difficulty_label=str(case.get("difficulty_label") or ""),
         location=str(case.get("location") or ""),
@@ -118,6 +122,8 @@ def unified_case_from_nuplan_replay(case: Mapping[str, Any]) -> UnifiedRiskCase:
             "vehicle_name": case.get("vehicle_name", ""),
             "category_name": case.get("category_name", ""),
             "scenario_description": case.get("scenario_description", ""),
+            "native_scenario_family": native_family,
+            "taxonomy_mapping": taxonomy_mapping,
         },
     )
 
@@ -128,9 +134,17 @@ def unified_cases_from_nuplan_benchmark(benchmark: Mapping[str, Any]) -> List[Un
 
 def unified_case_from_nuscenes_library_entry(entry: Mapping[str, Any]) -> UnifiedRiskCase:
     case_key = str(entry.get("case_key") or "")
+    passed = bool(entry.get("passed"))
+    validation_quality_score = entry.get("validation_quality_score", entry.get("validation_score"))
+    acceptance_score = entry.get(
+        "acceptance_score",
+        validation_quality_score if passed else 0.0,
+    )
+    validation_gate_score = entry.get("validation_gate_score", 1.0 if passed else 0.0)
     tags = [str(item) for item in entry.get("source_query_tags", []) if item]
     behaviors = [str(item) for item in entry.get("all_behaviors", []) if item]
-    family = _nuscenes_family_from_entry(entry, tags, behaviors)
+    taxonomy_mapping = map_scenario_labels("nuscenes", [*behaviors, *tags])
+    family = (taxonomy_mapping["family_ids"] or [_nuscenes_family_from_entry(entry, tags, behaviors)])[0]
     return UnifiedRiskCase(
         case_id=case_key,
         dataset="nuscenes",
@@ -159,8 +173,16 @@ def unified_case_from_nuscenes_library_entry(entry: Mapping[str, Any]) -> Unifie
             "min_ttc_s": entry.get("min_ttc_s"),
         },
         evidence={
-            "passed": bool(entry.get("passed")),
+            "passed": passed,
             "validation_score": entry.get("validation_score"),
+            "validation_quality_score": validation_quality_score,
+            "acceptance_score": acceptance_score,
+            "validation_gate_score": validation_gate_score,
+            "validation_gate_status": entry.get(
+                "validation_gate_status", "pass" if passed else "fail"
+            ),
+            "validation_protocol_version": entry.get("validation_protocol_version", ""),
+            "validation_pass_components": dict(entry.get("validation_pass_components") or {}),
             "retrieval_score": entry.get("retrieval_score"),
             "matched_behaviors": list(entry.get("matched_behaviors", [])),
             "all_behaviors": behaviors,
@@ -177,6 +199,7 @@ def unified_case_from_nuscenes_library_entry(entry: Mapping[str, Any]) -> Unifie
         metadata={
             "source_query_ids": list(entry.get("source_query_ids", [])),
             "source_queries": list(entry.get("source_queries", [])),
+            "taxonomy_mapping": taxonomy_mapping,
         },
     )
 
@@ -244,7 +267,7 @@ def _nuscenes_family_from_entry(
 def _nuscenes_difficulty_label(entry: Mapping[str, Any]) -> str:
     if not bool(entry.get("passed")):
         return "failed"
-    score = float(entry.get("validation_score") or 0.0)
+    score = float(entry.get("validation_quality_score", entry.get("validation_score")) or 0.0)
     if score >= 90.0:
         return "high_confidence"
     if score >= 75.0:

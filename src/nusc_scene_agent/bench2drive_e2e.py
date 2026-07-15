@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import csv
 import gzip
+import hashlib
 import html
 import io
 import json
 import math
 import os
 import random
+import tempfile
 import tarfile
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -23,11 +25,13 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 
+from nusc_scene_agent.scenario_taxonomy import build_taxonomy_coverage
+
 
 DEFAULT_BENCH2DRIVE_ROOT = Path("data/bench2drive/Bench2Drive-Base")
 DEFAULT_BENCH2DRIVE_MANIFEST = Path("artifacts/bench2drive/vision_e2e_manifest.jsonl")
 DEFAULT_BENCH2DRIVE_TENSOR_MANIFEST = Path("artifacts/bench2drive/vision_e2e_manifest_tensor_160.jsonl")
-DEFAULT_BENCH2DRIVE_OUTPUT = Path("outputs/bench2drive_vision_e2e_trajectory_transformer_final")
+DEFAULT_BENCH2DRIVE_OUTPUT = Path("outputs/bench2drive_vision_e2e_final")
 DEFAULT_BENCH2DRIVE_CACHE_ROOT = Path("data/bench2drive/cache/vision_e2e")
 DEFAULT_BENCH2DRIVE_TENSOR_CACHE_ROOT = Path("data/bench2drive/cache/vision_e2e_tensor_cache")
 DEFAULT_BENCH2DRIVE_CAMERAS = [
@@ -39,6 +43,7 @@ DEFAULT_BENCH2DRIVE_CAMERAS = [
     "rgb_back_right",
 ]
 BENCH2DRIVE_PLANNER_DT_S = 0.5
+BENCH2DRIVE_PREDICTION_COMPARISON_SCHEMA = "bench2drive_vision_prediction_comparison_v1"
 
 BENCH2DRIVE_DATASET_SCHEMA = "bench2drive_dataset_inventory_v1"
 BENCH2DRIVE_MANIFEST_SCHEMA = "bench2drive_vision_e2e_manifest_v1"
@@ -46,6 +51,7 @@ BENCH2DRIVE_TENSOR_CACHE_SCHEMA = "bench2drive_vision_tensor_cache_v1"
 BENCH2DRIVE_TRAINING_SCHEMA = "bench2drive_vision_e2e_training_v1"
 BENCH2DRIVE_EVAL_SCHEMA = "bench2drive_vision_e2e_eval_v1"
 BENCH2DRIVE_DIAGNOSTIC_SCHEMA = "bench2drive_vision_planner_diagnostics_v1"
+BENCH2DRIVE_CALIBRATION_SCHEMA = "bench2drive_trajectory_selection_calibration_v3"
 _NORMALIZATION_TENSOR_CACHE: Dict[Tuple[str, str], Tuple[Any, Any]] = {}
 
 
@@ -63,11 +69,16 @@ class VisionE2EModelConfig:
     trajectory_selection: str = "argmax"
     trajectory_top_k: int = 2
     trajectory_temperature: float = 1.0
+    trajectory_mode_calibrator: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
 class VisionE2ELossConfig:
     waypoint_weight: float = 1.0
+    selected_waypoint_weight: float = 0.5
+    displacement_weight: float = 0.0
+    endpoint_weight: float = 0.0
+    path_length_weight: float = 0.0
     control_weight: float = 0.25
     brake_weight: float = 0.1
     brake_positive_weight: float = 1.0
@@ -112,7 +123,8 @@ def build_bench2drive_vision_manifest(
     frame_stride: int = 5,
     future_steps: int = 5,
     future_frame_stride: int = 5,
-    train_fraction: float = 0.9,
+    train_fraction: float = 0.8,
+    val_fraction: float = 0.1,
     seed: int = 7,
     cameras: Sequence[str] = DEFAULT_BENCH2DRIVE_CAMERAS,
     cache_root: Optional[Path] = DEFAULT_BENCH2DRIVE_CACHE_ROOT,
@@ -128,14 +140,12 @@ def build_bench2drive_vision_manifest(
     if max_archives > 0:
         archives = archives[: int(max_archives)]
 
-    rng = random.Random(int(seed))
-    shuffled = list(archives)
-    rng.shuffle(shuffled)
-    train_cut = int(round(len(shuffled) * float(train_fraction)))
-    split_by_archive = {
-        path.name: ("train" if idx < train_cut else "val")
-        for idx, path in enumerate(shuffled)
-    }
+    split_by_archive = _stratified_archive_splits(
+        [(path.name, _scenario_family_from_name(path.name.replace(".tar.gz", ""))) for path in archives],
+        train_fraction=float(train_fraction),
+        val_fraction=float(val_fraction),
+        seed=int(seed),
+    )
 
     rows_written = 0
     split_counts: Counter[str] = Counter()
@@ -176,7 +186,12 @@ def build_bench2drive_vision_manifest(
         "future_steps": int(future_steps),
         "future_frame_stride": int(future_frame_stride),
         "train_fraction": float(train_fraction),
+        "val_fraction": float(val_fraction),
+        "test_fraction": round(max(0.0, 1.0 - float(train_fraction) - float(val_fraction)), 6),
         "seed": int(seed),
+        "split_protocol": "scenario-stratified archive-disjoint train/val/test",
+        "split_integrity": _split_integrity_from_rows(archive_summaries),
+        "taxonomy_coverage": build_taxonomy_coverage("bench2drive", scenario_counts),
         "cameras": list(cameras),
         "cache_root": str(cache_path) if cache_path is not None else "",
         "archive_summaries": archive_summaries[:64],
@@ -184,6 +199,176 @@ def build_bench2drive_vision_manifest(
     metadata_path = output_path.with_suffix(output_path.suffix + ".metadata.json")
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return metadata
+
+
+def resplit_bench2drive_vision_manifest(
+    manifest_path: Path,
+    output_path: Path,
+    *,
+    train_fraction: float = 0.8,
+    val_fraction: float = 0.1,
+    seed: int = 7,
+) -> Dict[str, Any]:
+    rows = _read_manifest_rows(Path(manifest_path))
+    if not rows:
+        raise ValueError(f"Manifest contains no rows: {manifest_path}")
+    archive_families = {
+        str(row.get("archive") or row.get("clip_name") or ""): str(row.get("scenario_family") or "unknown")
+        for row in rows
+    }
+    if "" in archive_families:
+        raise ValueError("Every Bench2Drive row must include an archive or clip_name for disjoint splitting.")
+    split_by_archive = _stratified_archive_splits(
+        sorted(archive_families.items()),
+        train_fraction=float(train_fraction),
+        val_fraction=float(val_fraction),
+        seed=int(seed),
+    )
+    split_counts: Counter[str] = Counter()
+    scenario_counts: Counter[str] = Counter()
+    split_scenario_counts: Dict[str, Counter[str]] = {
+        "train": Counter(),
+        "val": Counter(),
+        "test": Counter(),
+    }
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=str(output_path.parent),
+        prefix=output_path.name + ".",
+        suffix=".building",
+        delete=False,
+    ) as handle:
+        build_path = Path(handle.name)
+        for source_row in rows:
+            row = dict(source_row)
+            archive = str(row.get("archive") or row.get("clip_name") or "")
+            family = str(row.get("scenario_family") or "unknown")
+            split = split_by_archive[archive]
+            row["split"] = split
+            handle.write(json.dumps(row, separators=(",", ":")) + "\n")
+            split_counts[split] += 1
+            scenario_counts[family] += 1
+            split_scenario_counts[split][family] += 1
+    os.replace(build_path, output_path)
+    archive_counts = Counter(split_by_archive.values())
+    metadata = {
+        "schema": BENCH2DRIVE_MANIFEST_SCHEMA,
+        "source_manifest_path": str(manifest_path),
+        "manifest_path": str(output_path),
+        "row_count": len(rows),
+        "archive_count": len(split_by_archive),
+        "split_counts": dict(sorted(split_counts.items())),
+        "split_archive_counts": dict(sorted(archive_counts.items())),
+        "scenario_family_counts": dict(sorted(scenario_counts.items())),
+        "split_scenario_family_counts": {
+            split: dict(sorted(counts.items())) for split, counts in split_scenario_counts.items()
+        },
+        "train_fraction": float(train_fraction),
+        "val_fraction": float(val_fraction),
+        "test_fraction": round(max(0.0, 1.0 - float(train_fraction) - float(val_fraction)), 6),
+        "seed": int(seed),
+        "split_protocol": "scenario-stratified archive-disjoint train/val/test",
+        "split_integrity": _split_integrity_from_manifest_rows(rows, split_by_archive),
+        "taxonomy_coverage": build_taxonomy_coverage("bench2drive", scenario_counts),
+    }
+    source_metadata_path = Path(manifest_path).with_suffix(Path(manifest_path).suffix + ".metadata.json")
+    if source_metadata_path.exists():
+        source_metadata = json.loads(source_metadata_path.read_text(encoding="utf-8"))
+        for key in ["tensor_cache_path", "image_size", "dtype", "shape", "cameras", "tensor_cache_size_gb"]:
+            if key in source_metadata:
+                metadata[key] = source_metadata[key]
+    output_path.with_suffix(output_path.suffix + ".metadata.json").write_text(
+        json.dumps(metadata, indent=2),
+        encoding="utf-8",
+    )
+    return metadata
+
+
+def _stratified_archive_splits(
+    archives: Sequence[Tuple[str, str]],
+    *,
+    train_fraction: float,
+    val_fraction: float,
+    seed: int,
+) -> Dict[str, str]:
+    if float(train_fraction) >= 1.0:
+        val_fraction = 0.0
+    test_fraction = 1.0 - float(train_fraction) - float(val_fraction)
+    if train_fraction <= 0.0 or val_fraction < 0.0 or test_fraction < -1e-9:
+        raise ValueError("Split fractions must satisfy train > 0, val >= 0, and train + val <= 1.")
+    fractions = {"train": float(train_fraction), "val": float(val_fraction), "test": max(test_fraction, 0.0)}
+    grouped: Dict[str, List[str]] = {}
+    for archive, family in archives:
+        grouped.setdefault(str(family), []).append(str(archive))
+
+    assignments: Dict[str, str] = {}
+    for family in sorted(grouped):
+        members = sorted(grouped[family])
+        random.Random(f"{int(seed)}:{family}").shuffle(members)
+        counts = _allocate_split_counts(len(members), fractions)
+        cursor = 0
+        for split in ["train", "val", "test"]:
+            for archive in members[cursor : cursor + counts[split]]:
+                assignments[archive] = split
+            cursor += counts[split]
+    return assignments
+
+
+def _allocate_split_counts(size: int, fractions: Mapping[str, float]) -> Dict[str, int]:
+    names = ["train", "val", "test"]
+    raw = {name: size * float(fractions[name]) for name in names}
+    counts = {name: int(math.floor(raw[name])) for name in names}
+    for name in sorted(names, key=lambda item: (raw[item] - counts[item], fractions[item]), reverse=True):
+        if sum(counts.values()) >= size:
+            break
+        counts[name] += 1
+    positive = [name for name in names if float(fractions[name]) > 0.0]
+    if size >= len(positive):
+        for name in positive:
+            if counts[name] > 0:
+                continue
+            donor = max((item for item in positive if counts[item] > 1), key=lambda item: counts[item], default="")
+            if donor:
+                counts[donor] -= 1
+                counts[name] += 1
+    return counts
+
+
+def _split_integrity_from_rows(rows: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    assignments = {str(row.get("archive") or ""): str(row.get("split") or "") for row in rows}
+    return _split_integrity(assignments)
+
+
+def _split_integrity_from_manifest_rows(
+    rows: Sequence[Mapping[str, Any]],
+    assignments: Mapping[str, str],
+) -> Dict[str, Any]:
+    observed = {
+        str(row.get("archive") or row.get("clip_name") or ""): assignments[
+            str(row.get("archive") or row.get("clip_name") or "")
+        ]
+        for row in rows
+    }
+    return _split_integrity(observed)
+
+
+def _split_integrity(assignments: Mapping[str, str]) -> Dict[str, Any]:
+    split_archives = {
+        split: {archive for archive, assigned in assignments.items() if assigned == split}
+        for split in ["train", "val", "test"]
+    }
+    overlaps = {
+        "train_val": sorted(split_archives["train"] & split_archives["val"]),
+        "train_test": sorted(split_archives["train"] & split_archives["test"]),
+        "val_test": sorted(split_archives["val"] & split_archives["test"]),
+    }
+    return {
+        "archive_disjoint": not any(overlaps.values()),
+        "overlaps": overlaps,
+    }
 
 
 def train_vision_e2e_planner(
@@ -204,6 +389,10 @@ def train_vision_e2e_planner(
     trajectory_top_k: int = 2,
     trajectory_temperature: float = 1.0,
     waypoint_loss_weight: float = 1.0,
+    selected_waypoint_loss_weight: float = 0.5,
+    displacement_loss_weight: float = 0.0,
+    endpoint_loss_weight: float = 0.0,
+    path_length_loss_weight: float = 0.0,
     control_loss_weight: float = 0.25,
     brake_loss_weight: float = 0.1,
     brake_positive_weight: float = 1.0,
@@ -250,7 +439,8 @@ def train_vision_e2e_planner(
     if not rows:
         raise ValueError(f"Manifest contains no valid rows after finite-value filtering: {manifest_path}")
     train_rows = [row for row in rows if row.get("split") == "train"]
-    val_rows = [row for row in rows if row.get("split") != "train"]
+    val_rows = [row for row in rows if row.get("split") == "val"]
+    test_rows = [row for row in rows if row.get("split") == "test"]
     if max_train_samples > 0:
         train_rows = train_rows[: int(max_train_samples)]
     if max_val_samples > 0:
@@ -273,6 +463,10 @@ def train_vision_e2e_planner(
     )
     loss_config = VisionE2ELossConfig(
         waypoint_weight=float(waypoint_loss_weight),
+        selected_waypoint_weight=float(selected_waypoint_loss_weight),
+        displacement_weight=float(displacement_loss_weight),
+        endpoint_weight=float(endpoint_loss_weight),
+        path_length_weight=float(path_length_loss_weight),
         control_weight=float(control_loss_weight),
         brake_weight=float(brake_loss_weight),
         brake_positive_weight=float(brake_positive_weight),
@@ -362,6 +556,9 @@ def train_vision_e2e_planner(
         "last_checkpoint_path": str(last_path),
         "train_sample_count": len(train_rows),
         "val_sample_count": len(val_rows),
+        "test_sample_count": len(test_rows),
+        "split_protocol": "scenario-stratified archive-disjoint train/val/test",
+        "split_integrity": _manifest_split_integrity(rows),
         "epochs": max(int(epochs), 1),
         "batch_size": int(batch_size),
         "num_workers": int(num_workers),
@@ -404,7 +601,7 @@ def evaluate_vision_e2e_planner(
     checkpoint_path: Path = DEFAULT_BENCH2DRIVE_OUTPUT / "vision_e2e_planner_best.pt",
     output_dir: Path = DEFAULT_BENCH2DRIVE_OUTPUT / "eval",
     *,
-    split: str = "val",
+    split: str = "test",
     batch_size: int = 32,
     image_size: int = 160,
     max_samples: int = 0,
@@ -423,7 +620,7 @@ def evaluate_vision_e2e_planner(
         rows = rows[: int(max_samples)]
     if not rows:
         raise ValueError(f"No rows found for split={split!r}")
-    checkpoint = torch.load(str(checkpoint_path), map_location="cpu")
+    checkpoint = torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
     config = VisionE2EModelConfig(**dict(checkpoint.get("model_config") or {}))
     loss_config = VisionE2ELossConfig(**dict(checkpoint.get("loss_config") or {}))
     model = _build_vision_e2e_model(config)
@@ -441,6 +638,7 @@ def evaluate_vision_e2e_planner(
     )
     metrics, predictions = _run_prediction_epoch(torch, model, loader, target_device, loss_config=loss_config)
     scenario_family_metrics = _scenario_family_metrics_from_predictions(predictions)
+    scenario_counts = Counter(str(row.get("scenario_family") or "unknown") for row in rows)
     report = {
         "schema": BENCH2DRIVE_EVAL_SCHEMA,
         "manifest_path": str(manifest_path),
@@ -456,8 +654,409 @@ def evaluate_vision_e2e_planner(
         "device": str(target_device),
         "metrics": metrics,
         "scenario_family_metrics": scenario_family_metrics,
+        "taxonomy_coverage": build_taxonomy_coverage("bench2drive", scenario_counts),
+        "uncertainty": _bootstrap_prediction_metrics(predictions, seed=7, replicates=1000),
+        "trajectory_calibration_comparison": _trajectory_calibration_comparison(
+            predictions,
+            seed=7,
+            replicates=2000,
+        ),
     }
     _write_eval_outputs(report, predictions, output_dir)
+    return report
+
+
+def compare_vision_e2e_prediction_sets(
+    baseline_predictions_path: Path,
+    candidate_predictions_path: Path,
+    output_dir: Path,
+    *,
+    baseline_label: str = "baseline",
+    candidate_label: str = "candidate",
+    seed: int = 7,
+    bootstrap_replicates: int = 5000,
+    allow_case_intersection: bool = False,
+) -> Dict[str, Any]:
+    """Compare two prediction JSONL files with clip-level paired bootstrap."""
+    import numpy as np
+
+    baseline_path = Path(baseline_predictions_path)
+    candidate_path = Path(candidate_predictions_path)
+    baseline_rows = _read_prediction_rows(baseline_path)
+    candidate_rows = _read_prediction_rows(candidate_path)
+    baseline_map = _index_prediction_rows(baseline_rows)
+    candidate_map = _index_prediction_rows(candidate_rows)
+    baseline_ids = set(baseline_map)
+    candidate_ids = set(candidate_map)
+    common_ids = sorted(baseline_ids & candidate_ids)
+    baseline_only = sorted(baseline_ids - candidate_ids)
+    candidate_only = sorted(candidate_ids - baseline_ids)
+    if not common_ids:
+        raise ValueError("Prediction files do not share any case IDs.")
+    if (baseline_only or candidate_only) and not allow_case_intersection:
+        raise ValueError(
+            "Prediction files use different case sets; pass allow_case_intersection=True "
+            "to compare only their intersection."
+        )
+
+    paired_rows: List[Dict[str, Any]] = []
+    for case_id in common_ids:
+        baseline = baseline_map[case_id]
+        candidate = candidate_map[case_id]
+        baseline_target = np.asarray(baseline.get("target_future_waypoints_ego") or [], dtype=float)
+        candidate_target = np.asarray(candidate.get("target_future_waypoints_ego") or [], dtype=float)
+        if baseline_target.shape != candidate_target.shape or not np.allclose(baseline_target, candidate_target):
+            raise ValueError(f"Targets differ for paired case_id: {case_id}")
+        baseline_pred = np.asarray(baseline.get("predicted_future_waypoints_ego") or [], dtype=float)
+        candidate_pred = np.asarray(candidate.get("predicted_future_waypoints_ego") or [], dtype=float)
+        if baseline_pred.shape != baseline_target.shape or candidate_pred.shape != candidate_target.shape:
+            raise ValueError(f"Prediction horizon differs for paired case_id: {case_id}")
+        baseline_distance = np.linalg.norm(baseline_pred - baseline_target, axis=-1)
+        candidate_distance = np.linalg.norm(candidate_pred - candidate_target, axis=-1)
+        baseline_lateral = np.abs(baseline_pred[:, 0] - baseline_target[:, 0])
+        candidate_lateral = np.abs(candidate_pred[:, 0] - candidate_target[:, 0])
+        target_path_length = _waypoint_path_length(baseline_target)
+        baseline_path_error = abs(_waypoint_path_length(baseline_pred) / max(target_path_length, 1e-6) - 1.0)
+        candidate_path_error = abs(_waypoint_path_length(candidate_pred) / max(target_path_length, 1e-6) - 1.0)
+        baseline_brake = bool(baseline.get("predicted_should_brake"))
+        candidate_brake = bool(candidate.get("predicted_should_brake"))
+        target_brake = bool(baseline.get("target_should_brake"))
+        paired_rows.append(
+            {
+                "case_id": case_id,
+                "clip_name": str(baseline.get("clip_name") or candidate.get("clip_name") or case_id.rsplit(":", 1)[0]),
+                "scenario_family": str(baseline.get("scenario_family") or candidate.get("scenario_family") or "unknown"),
+                "baseline_ade_m": float(np.mean(baseline_distance)),
+                "candidate_ade_m": float(np.mean(candidate_distance)),
+                "baseline_fde_m": float(baseline_distance[-1]),
+                "candidate_fde_m": float(candidate_distance[-1]),
+                "baseline_lateral_mae_m": float(np.mean(baseline_lateral)),
+                "candidate_lateral_mae_m": float(np.mean(candidate_lateral)),
+                "baseline_path_length_error": float(baseline_path_error),
+                "candidate_path_length_error": float(candidate_path_error),
+                "target_should_brake": target_brake,
+                "baseline_predicted_should_brake": baseline_brake,
+                "candidate_predicted_should_brake": candidate_brake,
+            }
+        )
+
+    rng = np.random.default_rng(int(seed))
+    clusters: Dict[str, List[Mapping[str, Any]]] = {}
+    for row in paired_rows:
+        clusters.setdefault(str(row["clip_name"]), []).append(row)
+    cluster_rows = list(clusters.values())
+    cluster_count = len(cluster_rows)
+    replicate_count = max(int(bootstrap_replicates), 1)
+    sampled_cluster_indices = rng.integers(0, cluster_count, size=(replicate_count, cluster_count))
+
+    def _continuous_metric(row: Mapping[str, Any], prefix: str, metric: str) -> float:
+        return float(row[f"{prefix}_{metric}"])
+
+    metric_specs = (
+        ("ade_m", "ADE", "lower"),
+        ("fde_m", "FDE", "lower"),
+        ("lateral_mae_m", "Lateral MAE", "lower"),
+        ("path_length_error", "Path-length error", "lower"),
+    )
+    metric_rows: List[Dict[str, Any]] = []
+    for metric, display_name, direction in metric_specs:
+        baseline_cluster_sums = np.asarray(
+            [sum(_continuous_metric(row, "baseline", metric) for row in rows) for rows in cluster_rows],
+            dtype=float,
+        )
+        candidate_cluster_sums = np.asarray(
+            [sum(_continuous_metric(row, "candidate", metric) for row in rows) for rows in cluster_rows],
+            dtype=float,
+        )
+        cluster_sizes = np.asarray([len(rows) for rows in cluster_rows], dtype=float)
+        baseline_samples = np.sum(baseline_cluster_sums[sampled_cluster_indices], axis=1) / np.sum(
+            cluster_sizes[sampled_cluster_indices], axis=1
+        )
+        candidate_samples = np.sum(candidate_cluster_sums[sampled_cluster_indices], axis=1) / np.sum(
+            cluster_sizes[sampled_cluster_indices], axis=1
+        )
+        baseline_values = np.asarray([row[f"baseline_{metric}"] for row in paired_rows], dtype=float)
+        candidate_values = np.asarray([row[f"candidate_{metric}"] for row in paired_rows], dtype=float)
+        improvements = baseline_samples - candidate_samples if direction == "lower" else candidate_samples - baseline_samples
+        point_improvement = float(np.mean(baseline_values - candidate_values)) if direction == "lower" else float(np.mean(candidate_values - baseline_values))
+        ci_low, ci_high = np.percentile(improvements, [2.5, 97.5])
+        baseline_mean = float(np.mean(baseline_values))
+        candidate_mean = float(np.mean(candidate_values))
+        metric_rows.append(
+            {
+                "metric": metric,
+                "display_name": display_name,
+                "direction": direction,
+                "case_count": len(paired_rows),
+                "cluster_count": cluster_count,
+                "baseline_mean": round(baseline_mean, 6),
+                "candidate_mean": round(candidate_mean, 6),
+                "candidate_minus_baseline": round(candidate_mean - baseline_mean, 6),
+                "oriented_improvement": round(point_improvement, 6),
+                "improvement_ci95_low": round(float(ci_low), 6),
+                "improvement_ci95_high": round(float(ci_high), 6),
+                "candidate_win_rate": round(
+                    float(np.mean((baseline_values - candidate_values if direction == "lower" else candidate_values - baseline_values) > 0.0)),
+                    6,
+                ),
+                "bootstrap_probability_of_improvement": round(float(np.mean(improvements > 0.0)), 6),
+                "ci95_excludes_zero": bool(ci_low > 0.0 or ci_high < 0.0),
+            }
+        )
+
+    baseline_tp, baseline_fp, baseline_fn = _cluster_brake_counts(cluster_rows, "baseline")
+    candidate_tp, candidate_fp, candidate_fn = _cluster_brake_counts(cluster_rows, "candidate")
+    baseline_f1_samples = _f1_from_counts(
+        np.sum(baseline_tp[sampled_cluster_indices], axis=1),
+        np.sum(baseline_fp[sampled_cluster_indices], axis=1),
+        np.sum(baseline_fn[sampled_cluster_indices], axis=1),
+    )
+    candidate_f1_samples = _f1_from_counts(
+        np.sum(candidate_tp[sampled_cluster_indices], axis=1),
+        np.sum(candidate_fp[sampled_cluster_indices], axis=1),
+        np.sum(candidate_fn[sampled_cluster_indices], axis=1),
+    )
+    baseline_f1 = float(_f1_from_counts(np.sum(baseline_tp), np.sum(baseline_fp), np.sum(baseline_fn)))
+    candidate_f1 = float(_f1_from_counts(np.sum(candidate_tp), np.sum(candidate_fp), np.sum(candidate_fn)))
+    f1_improvements = candidate_f1_samples - baseline_f1_samples
+    f1_low, f1_high = np.percentile(f1_improvements, [2.5, 97.5])
+    metric_rows.append(
+        {
+            "metric": "brake_f1",
+            "display_name": "Brake F1",
+            "direction": "higher",
+            "case_count": len(paired_rows),
+            "cluster_count": cluster_count,
+            "baseline_mean": round(baseline_f1, 6),
+            "candidate_mean": round(candidate_f1, 6),
+            "candidate_minus_baseline": round(candidate_f1 - baseline_f1, 6),
+            "oriented_improvement": round(candidate_f1 - baseline_f1, 6),
+            "improvement_ci95_low": round(float(f1_low), 6),
+            "improvement_ci95_high": round(float(f1_high), 6),
+            "candidate_win_rate": round(float(np.mean(f1_improvements > 0.0)), 6),
+            "bootstrap_probability_of_improvement": round(float(np.mean(f1_improvements > 0.0)), 6),
+            "ci95_excludes_zero": bool(f1_low > 0.0 or f1_high < 0.0),
+        }
+    )
+    payload = {
+        "schema": BENCH2DRIVE_PREDICTION_COMPARISON_SCHEMA,
+        "method": "paired clip-level percentile bootstrap",
+        "baseline": {"label": str(baseline_label), "predictions_path": str(baseline_path)},
+        "candidate": {"label": str(candidate_label), "predictions_path": str(candidate_path)},
+        "case_alignment": {
+            "paired_case_count": len(common_ids),
+            "identical_case_sets": not baseline_only and not candidate_only,
+            "baseline_only_case_ids": baseline_only,
+            "candidate_only_case_ids": candidate_only,
+        },
+        "bootstrap": {"seed": int(seed), "replicates": replicate_count, "cluster_key": "clip_name"},
+        "metrics": metric_rows,
+        "paired_cases": paired_rows,
+    }
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "prediction_comparison.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _write_prediction_comparison_csv(metric_rows, output_dir / "prediction_comparison.csv")
+    _write_prediction_comparison_csv(paired_rows, output_dir / "prediction_paired_cases.csv")
+    (output_dir / "prediction_comparison.md").write_text(_render_prediction_comparison_markdown(payload), encoding="utf-8")
+    _render_prediction_comparison_figure(metric_rows, output_dir / "prediction_comparison.png")
+    return payload
+
+
+def _index_prediction_rows(rows: Sequence[Mapping[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    indexed: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        case_id = str(row.get("case_id") or "")
+        if not case_id or case_id in indexed:
+            raise ValueError(f"Prediction rows contain an invalid or duplicate case_id: {case_id}")
+        indexed[case_id] = dict(row)
+    return indexed
+
+
+def _waypoint_path_length(points: Any) -> float:
+    import numpy as np
+
+    values = np.asarray(points, dtype=float)
+    if len(values) < 2:
+        return 0.0
+    return float(np.linalg.norm(np.diff(values, axis=0), axis=1).sum())
+
+
+def _cluster_brake_counts(cluster_rows: Sequence[Sequence[Mapping[str, Any]]], prefix: str) -> Tuple[Any, Any, Any]:
+    import numpy as np
+
+    tp, fp, fn = [], [], []
+    for rows in cluster_rows:
+        true_positive = false_positive = false_negative = 0
+        for row in rows:
+            target = bool(row.get("target_should_brake"))
+            predicted = bool(row.get(f"{prefix}_predicted_should_brake"))
+            true_positive += int(target and predicted)
+            false_positive += int(not target and predicted)
+            false_negative += int(target and not predicted)
+        tp.append(true_positive)
+        fp.append(false_positive)
+        fn.append(false_negative)
+    return np.asarray(tp, dtype=float), np.asarray(fp, dtype=float), np.asarray(fn, dtype=float)
+
+
+def _f1_from_counts(tp: Any, fp: Any, fn: Any) -> Any:
+    import numpy as np
+
+    return 2.0 * tp / np.maximum(2.0 * tp + fp + fn, 1.0)
+
+
+def _write_prediction_comparison_csv(rows: Sequence[Mapping[str, Any]], output_path: Path) -> None:
+    if not rows:
+        Path(output_path).write_text("", encoding="utf-8")
+        return
+    fieldnames = list(rows[0].keys())
+    with Path(output_path).open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows({key: row.get(key, "") for key in fieldnames} for row in rows)
+
+
+def _render_prediction_comparison_markdown(payload: Mapping[str, Any]) -> str:
+    alignment = dict(payload.get("case_alignment") or {})
+    lines = [
+        "# Bench2Drive Vision Prediction Comparison",
+        "",
+        f"- Baseline: `{dict(payload.get('baseline') or {}).get('label', '')}`",
+        f"- Candidate: `{dict(payload.get('candidate') or {}).get('label', '')}`",
+        f"- Paired cases: `{alignment.get('paired_case_count', 0)}`",
+        "- Positive improvement favors the candidate.",
+        "",
+        "| Metric | Baseline | Candidate | Improvement | 95% CI | Win Rate |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in list(payload.get("metrics") or []):
+        lines.append(
+            "| {0} | {1:.4f} | {2:.4f} | {3:.4f} | [{4:.4f}, {5:.4f}] | {6:.3f} |".format(
+                row.get("display_name", row.get("metric", "")),
+                float(row.get("baseline_mean") or 0.0),
+                float(row.get("candidate_mean") or 0.0),
+                float(row.get("oriented_improvement") or 0.0),
+                float(row.get("improvement_ci95_low") or 0.0),
+                float(row.get("improvement_ci95_high") or 0.0),
+                float(row.get("candidate_win_rate") or 0.0),
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _render_prediction_comparison_figure(rows: Sequence[Mapping[str, Any]], output_path: Path) -> None:
+    labels = [str(row.get("display_name") or row.get("metric") or "") for row in rows]
+    values = [float(row.get("oriented_improvement") or 0.0) for row in rows]
+    low = [float(row.get("improvement_ci95_low") or 0.0) for row in rows]
+    high = [float(row.get("improvement_ci95_high") or 0.0) for row in rows]
+    errors = [[max(value - bound, 0.0) for value, bound in zip(values, low)], [max(bound - value, 0.0) for value, bound in zip(values, high)]]
+    colors = ["#26734d" if value >= 0.0 else "#b24a3b" for value in values]
+    fig, ax = plt.subplots(figsize=(8.0, 4.4), dpi=180)
+    positions = list(range(len(rows)))
+    ax.barh(positions, values, xerr=errors, color=colors, alpha=0.9, capsize=3)
+    ax.axvline(0.0, color="#222222", linewidth=0.9)
+    ax.set_yticks(positions, labels)
+    ax.invert_yaxis()
+    ax.set_xlabel("Candidate improvement; positive is better")
+    ax.set_title("Bench2Drive paired open-loop comparison")
+    ax.grid(axis="x", alpha=0.22)
+    fig.tight_layout()
+    fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def calibrate_trajectory_selection(
+    predictions_path: Path,
+    evaluation_report_path: Path,
+    checkpoint_path: Path,
+    output_checkpoint_path: Path,
+    output_report_path: Path,
+    *,
+    temperatures: Sequence[float] = (0.25, 0.5, 0.75, 1.0, 1.5, 2.0),
+    selections: Sequence[str] = ("argmax", "expected", "topk_expected"),
+    top_k: int = 2,
+) -> Dict[str, Any]:
+    evaluation_report = json.loads(Path(evaluation_report_path).read_text(encoding="utf-8"))
+    if str(evaluation_report.get("split") or "") != "val":
+        raise ValueError("Trajectory calibration requires predictions from the validation split.")
+    predictions = _read_prediction_rows(Path(predictions_path))
+    if not predictions:
+        raise ValueError(f"No validation predictions found: {predictions_path}")
+    if any(not row.get("predicted_future_modes_ego") or not row.get("mode_logits") for row in predictions):
+        raise ValueError("Validation predictions must include trajectory modes and mode logits.")
+
+    search_rows = []
+    for selection in selections:
+        candidate_temperatures = [1.0] if selection == "argmax" else list(temperatures)
+        for temperature in candidate_temperatures:
+            selected_predictions = [
+                _select_trajectory_from_prediction(
+                    row,
+                    selection=str(selection),
+                    temperature=float(temperature),
+                    top_k=int(top_k),
+                )
+                for row in predictions
+            ]
+            metrics = _trajectory_metrics_from_pairs(
+                selected_predictions,
+                [row["target_future_waypoints_ego"] for row in predictions],
+            )
+            search_rows.append(
+                {
+                    "selection": str(selection),
+                    "temperature": float(temperature),
+                    "top_k": int(top_k),
+                    **metrics,
+                }
+            )
+    selected = min(search_rows, key=lambda row: (float(row["ade_m"]), float(row["fde_m"])))
+    mode_calibrator_config, mode_calibrator_report = _fit_mode_calibrator(
+        predictions,
+        selection=str(selected["selection"]),
+        temperature=float(selected["temperature"]),
+        top_k=int(selected["top_k"]),
+    )
+
+    torch, _, _ = _require_torch_stack(require_pillow=False)
+    checkpoint = torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
+    model_config = dict(checkpoint.get("model_config") or {})
+    model_config.update(
+        {
+            "trajectory_selection": selected["selection"],
+            "trajectory_temperature": float(selected["temperature"]),
+            "trajectory_top_k": int(selected["top_k"]),
+            "trajectory_mode_calibrator": mode_calibrator_config,
+        }
+    )
+    checkpoint["model_config"] = model_config
+    checkpoint["trajectory_calibration"] = {
+        "schema": BENCH2DRIVE_CALIBRATION_SCHEMA,
+        "validation_evaluation_report": str(evaluation_report_path),
+        "selected": dict(selected),
+        "mode_calibrator": mode_calibrator_report,
+    }
+    output_checkpoint_path = Path(output_checkpoint_path)
+    output_checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(checkpoint, str(output_checkpoint_path))
+
+    report = {
+        "schema": BENCH2DRIVE_CALIBRATION_SCHEMA,
+        "source_checkpoint": str(checkpoint_path),
+        "output_checkpoint": str(output_checkpoint_path),
+        "validation_evaluation_report": str(evaluation_report_path),
+        "validation_predictions": str(predictions_path),
+        "validation_sample_count": len(predictions),
+        "selection_metric": "ADE with FDE tie-break",
+        "selected": dict(selected),
+        "search": sorted(search_rows, key=lambda row: (float(row["ade_m"]), float(row["fde_m"]))),
+        "mode_calibrator": mode_calibrator_report,
+        "calibrated_model_config": model_config,
+    }
+    output_report_path = Path(output_report_path)
+    output_report_path.parent.mkdir(parents=True, exist_ok=True)
+    output_report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report
 
 
@@ -594,6 +1193,8 @@ def build_bench2drive_vision_tensor_cache(
         "invalid_sample_count": int(invalid_sample_count),
         "split_counts": dict(sorted(split_counts.items())),
         "scenario_family_counts": dict(sorted(scenario_counts.items())),
+        "split_integrity": _manifest_split_integrity(rows),
+        "taxonomy_coverage": build_taxonomy_coverage("bench2drive", scenario_counts),
         "image_size": image_size,
         "dtype": "uint8",
         "shape": list(shape),
@@ -606,6 +1207,19 @@ def build_bench2drive_vision_tensor_cache(
     metadata_path = output_manifest_path.with_suffix(output_manifest_path.suffix + ".metadata.json")
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return metadata
+
+
+def _manifest_split_integrity(rows: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    archive_splits: Dict[str, set[str]] = {}
+    for row in rows:
+        archive = str(row.get("archive") or row.get("clip_name") or "")
+        archive_splits.setdefault(archive, set()).add(str(row.get("split") or ""))
+    overlap = {archive: sorted(splits) for archive, splits in archive_splits.items() if len(splits) > 1}
+    return {
+        "archive_disjoint": not overlap,
+        "archive_count": len(archive_splits),
+        "overlapping_archives": overlap,
+    }
 
 
 def _inspect_bench2drive_archive(archive_path: Path) -> Dict[str, Any]:
@@ -1355,6 +1969,29 @@ def _build_vision_e2e_model(config: VisionE2EModelConfig) -> Any:
             self.trajectory_selection = str(getattr(config, "trajectory_selection", "argmax") or "argmax")
             self.trajectory_top_k = max(int(getattr(config, "trajectory_top_k", 2) or 2), 1)
             self.trajectory_temperature = max(float(getattr(config, "trajectory_temperature", 1.0) or 1.0), 1e-6)
+            calibrator = dict(getattr(config, "trajectory_mode_calibrator", None) or {})
+            self.mode_calibrator_enabled = bool(calibrator.get("enabled"))
+            if self.mode_calibrator_enabled:
+                self.register_buffer(
+                    "mode_calibrator_mean",
+                    torch.tensor(calibrator["feature_mean"], dtype=torch.float32),
+                    persistent=False,
+                )
+                self.register_buffer(
+                    "mode_calibrator_scale",
+                    torch.tensor(calibrator["feature_scale"], dtype=torch.float32).clamp_min(1e-6),
+                    persistent=False,
+                )
+                self.register_buffer(
+                    "mode_calibrator_coef",
+                    torch.tensor(calibrator["coef"], dtype=torch.float32),
+                    persistent=False,
+                )
+                self.register_buffer(
+                    "mode_calibrator_intercept",
+                    torch.tensor(calibrator["intercept"], dtype=torch.float32),
+                    persistent=False,
+                )
             self.route_mlp = nn.Sequential(
                 nn.Linear(config.route_feature_dim, hidden),
                 nn.SiLU(inplace=True),
@@ -1411,15 +2048,55 @@ def _build_vision_e2e_model(config: VisionE2EModelConfig) -> Any:
             selection_logits = mode_logits / float(self.trajectory_temperature)
             mode_probabilities = torch.softmax(selection_logits, dim=1)
             selected_future = self._select_future(future_modes, mode_logits, mode_probabilities)
+            uncalibrated_future = selected_future
             mode_context = (mode_states * mode_probabilities.unsqueeze(-1)).sum(dim=1)
             fused = scene_token + mode_context
+            control_output = self.control_head(fused)
+            brake_output = self.brake_head(fused)
+            calibrated_probabilities = None
+            if self.mode_calibrator_enabled:
+                selected_future, calibrated_probabilities = self._apply_mode_calibrator(
+                    selected_future=selected_future,
+                    future_modes=future_modes,
+                    mode_logits=mode_logits,
+                    control_output=control_output,
+                    brake_output=brake_output,
+                )
             return {
                 "future": selected_future,
+                "uncalibrated_future": uncalibrated_future,
                 "future_modes": future_modes,
                 "mode_logits": mode_logits,
-                "control": self.control_head(fused),
-                "brake_logits": self.brake_head(fused),
+                "calibrated_mode_probabilities": calibrated_probabilities,
+                "control": control_output,
+                "brake_logits": brake_output,
             }
+
+        def _apply_mode_calibrator(
+            self,
+            *,
+            selected_future: Any,
+            future_modes: Any,
+            mode_logits: Any,
+            control_output: Any,
+            brake_output: Any,
+        ) -> Tuple[Any, Any]:
+            features = torch.cat(
+                [
+                    selected_future,
+                    future_modes.flatten(1),
+                    mode_logits,
+                    control_output,
+                    torch.sigmoid(brake_output),
+                ],
+                dim=1,
+            )
+            normalized = (features - self.mode_calibrator_mean) / self.mode_calibrator_scale
+            calibrated_logits = normalized @ self.mode_calibrator_coef.transpose(0, 1)
+            calibrated_logits = calibrated_logits + self.mode_calibrator_intercept
+            calibrated_probabilities = torch.softmax(calibrated_logits, dim=1)
+            calibrated_future = (future_modes * calibrated_probabilities.unsqueeze(-1)).sum(dim=1)
+            return calibrated_future, calibrated_probabilities
 
         def _select_future(self, future_modes: Any, mode_logits: Any, mode_probabilities: Any) -> Any:
             batch = int(future_modes.shape[0])
@@ -1541,14 +2218,33 @@ def _run_prediction_epoch(
             for key, value in losses.items():
                 totals[key] = totals.get(key, 0.0) + float(value.detach().cpu()) * batch_size
             pred_future = prediction["future"].detach().cpu().reshape(images.shape[0], -1, 2).tolist()
+            uncalibrated_future = None
+            if prediction.get("uncalibrated_future") is not None:
+                uncalibrated_future = (
+                    prediction["uncalibrated_future"]
+                    .detach()
+                    .cpu()
+                    .reshape(images.shape[0], -1, 2)
+                    .tolist()
+                )
             true_future = future.detach().cpu().reshape(images.shape[0], -1, 2).tolist()
             pred_control = prediction["control"].detach().cpu().tolist()
             true_control = control.detach().cpu().tolist()
             target_brake = brake.detach().cpu().reshape(-1).tolist()
             brake_prob = torch.sigmoid(prediction["brake_logits"]).detach().cpu().reshape(-1).tolist()
+            mode_futures = None
+            mode_logits = None
+            if prediction.get("future_modes") is not None and prediction.get("mode_logits") is not None:
+                mode_futures = (
+                    prediction["future_modes"]
+                    .detach()
+                    .cpu()
+                    .reshape(images.shape[0], prediction["future_modes"].shape[1], -1, 2)
+                    .tolist()
+                )
+                mode_logits = prediction["mode_logits"].detach().cpu().tolist()
             for idx, case_id in enumerate(batch["case_id"]):
-                predictions.append(
-                    {
+                row = {
                         "case_id": str(case_id),
                         "scenario_family": str(batch["scenario_family"][idx]),
                         "predicted_future_waypoints_ego": pred_future[idx],
@@ -1559,8 +2255,411 @@ def _run_prediction_epoch(
                         "predicted_should_brake": bool(float(brake_prob[idx]) >= float((loss_config or VisionE2ELossConfig()).brake_threshold)),
                         "target_should_brake": bool(float(target_brake[idx]) >= 0.5),
                     }
-                )
+                if mode_futures is not None and mode_logits is not None:
+                    row["predicted_future_modes_ego"] = mode_futures[idx]
+                    row["mode_logits"] = mode_logits[idx]
+                if uncalibrated_future is not None:
+                    row["uncalibrated_future_waypoints_ego"] = uncalibrated_future[idx]
+                predictions.append(row)
     return _add_brake_derived_metrics(_finalize_weighted_metrics(totals, sample_count)), predictions
+
+
+def _select_trajectory_from_prediction(
+    row: Mapping[str, Any],
+    *,
+    selection: str,
+    temperature: float,
+    top_k: int,
+) -> List[List[float]]:
+    import numpy as np
+
+    modes = np.asarray(row["predicted_future_modes_ego"], dtype=float)
+    logits = np.asarray(row["mode_logits"], dtype=float)
+    if selection == "argmax":
+        return modes[int(np.argmax(logits))].tolist()
+    scaled = logits / max(float(temperature), 1e-6)
+    scaled = scaled - float(np.max(scaled))
+    probabilities = np.exp(scaled)
+    probabilities = probabilities / max(float(probabilities.sum()), 1e-12)
+    if selection == "topk_expected":
+        count = min(max(int(top_k), 1), len(probabilities))
+        indices = np.argsort(probabilities)[-count:]
+        probabilities = probabilities[indices]
+        probabilities = probabilities / max(float(probabilities.sum()), 1e-12)
+        modes = modes[indices]
+    elif selection != "expected":
+        raise ValueError(f"Unknown trajectory selection: {selection}")
+    return np.sum(modes * probabilities[:, None, None], axis=0).tolist()
+
+
+def _trajectory_metrics_from_pairs(
+    predicted: Sequence[Sequence[Sequence[float]]],
+    target: Sequence[Sequence[Sequence[float]]],
+) -> Dict[str, float]:
+    import numpy as np
+
+    pred = np.asarray(predicted, dtype=float)
+    truth = np.asarray(target, dtype=float)
+    distances = np.linalg.norm(pred - truth, axis=-1)
+    return {
+        "ade_m": round(float(np.mean(distances)), 6),
+        "fde_m": round(float(np.mean(distances[:, -1])), 6),
+    }
+
+
+def _mode_calibrator_feature_arrays(
+    predictions: Sequence[Mapping[str, Any]],
+    *,
+    selection: str,
+    temperature: float,
+    top_k: int,
+) -> Tuple[Any, Any, Any, Any, List[str]]:
+    import numpy as np
+
+    selected = np.asarray(
+        [
+            _select_trajectory_from_prediction(
+                row,
+                selection=selection,
+                temperature=temperature,
+                top_k=top_k,
+            )
+            for row in predictions
+        ],
+        dtype=float,
+    )
+    modes = np.asarray([row["predicted_future_modes_ego"] for row in predictions], dtype=float)
+    logits = np.asarray([row["mode_logits"] for row in predictions], dtype=float)
+    control = np.asarray([row["predicted_control"] for row in predictions], dtype=float)
+    brake_probability = np.asarray(
+        [row["predicted_brake_probability"] for row in predictions],
+        dtype=float,
+    ).reshape(-1, 1)
+    target = np.asarray([row["target_future_waypoints_ego"] for row in predictions], dtype=float)
+    features = np.concatenate(
+        [
+            selected.reshape(len(predictions), -1),
+            modes.reshape(len(predictions), -1),
+            logits,
+            control,
+            brake_probability,
+        ],
+        axis=1,
+    )
+    clusters = [str(row.get("clip_name") or str(row.get("case_id") or "").rsplit(":", 1)[0]) for row in predictions]
+    return features, selected, modes, target, clusters
+
+
+def _calibrator_probabilities(model: Any, features: Any, mode_count: int) -> Any:
+    import numpy as np
+
+    raw = np.asarray(model.predict_proba(features), dtype=float)
+    probabilities = np.zeros((len(features), int(mode_count)), dtype=float)
+    for source_idx, class_id in enumerate(model.named_steps["logisticregression"].classes_):
+        probabilities[:, int(class_id)] = raw[:, source_idx]
+    row_sum = probabilities.sum(axis=1, keepdims=True)
+    return probabilities / np.maximum(row_sum, 1e-12)
+
+
+def _fit_mode_calibrator(
+    predictions: Sequence[Mapping[str, Any]],
+    *,
+    selection: str,
+    temperature: float,
+    top_k: int,
+    regularization_values: Sequence[float] = (0.1, 1.0, 10.0),
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    import numpy as np
+
+    try:
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import make_pipeline
+        from sklearn.preprocessing import StandardScaler
+    except ImportError as exc:
+        raise RuntimeError(
+            "Trajectory mode calibration requires scikit-learn. Install the vision extra."
+        ) from exc
+
+    features, selected, modes, target, clusters = _mode_calibrator_feature_arrays(
+        predictions,
+        selection=selection,
+        temperature=temperature,
+        top_k=top_k,
+    )
+    mode_count = int(modes.shape[1])
+    mode_ade = np.linalg.norm(modes - target[:, None, :, :], axis=-1).mean(axis=-1)
+    target_mode = mode_ade.argmin(axis=1)
+    unique_target_modes = np.unique(target_mode)
+    if mode_count < 2 or len(unique_target_modes) < 2:
+        return {"enabled": False}, {
+            "enabled": False,
+            "reason": "insufficient_mode_diversity",
+            "mode_count": mode_count,
+            "target_mode_count": int(len(unique_target_modes)),
+        }
+
+    unique_clusters = sorted(set(clusters))
+    holdout_clusters = {
+        name
+        for name in unique_clusters
+        if int(hashlib.sha256(name.encode("utf-8")).hexdigest()[:8], 16) % 5 == 0
+    }
+    if not holdout_clusters and unique_clusters:
+        holdout_clusters = {unique_clusters[-1]}
+    holdout_mask = np.asarray([name in holdout_clusters for name in clusters], dtype=bool)
+    train_mask = ~holdout_mask
+    if not bool(train_mask.any()) or not bool(holdout_mask.any()):
+        raise ValueError("Mode calibration requires at least one calibration-train and holdout cluster.")
+
+    baseline_holdout = _trajectory_metrics_from_pairs(selected[holdout_mask], target[holdout_mask])
+    search_rows: List[Dict[str, Any]] = []
+    for regularization in regularization_values:
+        model = make_pipeline(
+            StandardScaler(),
+            LogisticRegression(
+                C=max(float(regularization), 1e-6),
+                max_iter=3000,
+                solver="lbfgs",
+            ),
+        )
+        model.fit(features[train_mask], target_mode[train_mask])
+        probabilities = _calibrator_probabilities(model, features[holdout_mask], mode_count)
+        calibrated = np.sum(modes[holdout_mask] * probabilities[:, :, None, None], axis=1)
+        metrics = _trajectory_metrics_from_pairs(calibrated, target[holdout_mask])
+        search_rows.append(
+            {
+                "regularization_c": float(regularization),
+                **metrics,
+                "ade_delta_m": round(float(metrics["ade_m"]) - float(baseline_holdout["ade_m"]), 6),
+                "fde_delta_m": round(float(metrics["fde_m"]) - float(baseline_holdout["fde_m"]), 6),
+            }
+        )
+
+    selected_idx = min(
+        range(len(search_rows)),
+        key=lambda idx: (float(search_rows[idx]["ade_m"]), float(search_rows[idx]["fde_m"])),
+    )
+    selected_search = search_rows[selected_idx]
+    # Require both trajectory metrics to improve on held-out clips. A small ADE
+    # gain should not mask a degraded endpoint forecast.
+    if any(
+        float(selected_search[key]) >= 0.0
+        for key in ("ade_delta_m", "fde_delta_m")
+    ):
+        return {"enabled": False}, {
+            "enabled": False,
+            "reason": "no_clip_holdout_improvement",
+            "baseline_holdout": baseline_holdout,
+            "selected": dict(selected_search),
+            "search": sorted(search_rows, key=lambda row: (float(row["ade_m"]), float(row["fde_m"]))),
+        }
+    final_model = make_pipeline(
+        StandardScaler(),
+        LogisticRegression(
+            C=float(selected_search["regularization_c"]),
+            max_iter=3000,
+            solver="lbfgs",
+        ),
+    )
+    final_model.fit(features, target_mode)
+    scaler = final_model.named_steps["standardscaler"]
+    classifier = final_model.named_steps["logisticregression"]
+
+    full_coef = np.zeros((mode_count, features.shape[1]), dtype=float)
+    full_intercept = np.full(mode_count, -20.0, dtype=float)
+    for source_idx, class_id in enumerate(classifier.classes_):
+        full_coef[int(class_id)] = classifier.coef_[source_idx]
+        full_intercept[int(class_id)] = classifier.intercept_[source_idx]
+
+    config = {
+        "schema": "bench2drive_mode_calibrator_v1",
+        "enabled": True,
+        "method": "validation_fitted_multinomial_expected",
+        "feature_order": [
+            "selected_future_flat",
+            "future_modes_flat",
+            "mode_logits",
+            "predicted_control",
+            "predicted_brake_probability",
+        ],
+        "feature_mean": scaler.mean_.tolist(),
+        "feature_scale": scaler.scale_.tolist(),
+        "coef": full_coef.tolist(),
+        "intercept": full_intercept.tolist(),
+        "mode_count": mode_count,
+        "regularization_c": float(selected_search["regularization_c"]),
+    }
+    report = {
+        "enabled": True,
+        "protocol": "clip-disjoint 80/20 calibration holdout; refit on all validation clips",
+        "calibration_sample_count": int(train_mask.sum()),
+        "holdout_sample_count": int(holdout_mask.sum()),
+        "calibration_cluster_count": int(len(unique_clusters) - len(holdout_clusters)),
+        "holdout_cluster_count": int(len(holdout_clusters)),
+        "mode_count": mode_count,
+        "target_mode_distribution": {
+            str(mode_idx): int(np.sum(target_mode == mode_idx)) for mode_idx in range(mode_count)
+        },
+        "baseline_holdout": baseline_holdout,
+        "selected": dict(selected_search),
+        "search": sorted(search_rows, key=lambda row: (float(row["ade_m"]), float(row["fde_m"]))),
+    }
+    return config, report
+
+
+def _bootstrap_prediction_metrics(
+    predictions: Sequence[Mapping[str, Any]],
+    *,
+    seed: int,
+    replicates: int,
+) -> Dict[str, Any]:
+    import numpy as np
+
+    if not predictions:
+        return {"method": "cluster-level percentile bootstrap", "replicates": 0, "metrics": {}}
+
+    rows_by_cluster: Dict[str, List[Mapping[str, Any]]] = {}
+    for row in predictions:
+        case_id = str(row.get("case_id") or "unknown")
+        cluster = str(row.get("clip_name") or case_id.rsplit(":", 1)[0] or case_id)
+        rows_by_cluster.setdefault(cluster, []).append(row)
+
+    def row_metrics(rows: Sequence[Mapping[str, Any]]) -> Tuple[List[float], List[float], List[bool], List[bool]]:
+        ade: List[float] = []
+        fde: List[float] = []
+        brake_target: List[bool] = []
+        brake_predicted: List[bool] = []
+        for row in rows:
+            pred = np.asarray(row["predicted_future_waypoints_ego"], dtype=float)
+            target = np.asarray(row["target_future_waypoints_ego"], dtype=float)
+            distance = np.linalg.norm(pred - target, axis=-1)
+            ade.append(float(np.mean(distance)))
+            fde.append(float(distance[-1]))
+            brake_target.append(bool(row.get("target_should_brake")))
+            brake_predicted.append(bool(row.get("predicted_should_brake")))
+        return ade, fde, brake_target, brake_predicted
+
+    ade, fde, brake_target, brake_predicted = row_metrics(predictions)
+    ade_array = np.asarray(ade, dtype=float)
+    fde_array = np.asarray(fde, dtype=float)
+    target_array = np.asarray(brake_target, dtype=bool)
+    predicted_array = np.asarray(brake_predicted, dtype=bool)
+    rng = np.random.default_rng(int(seed))
+    replicate_count = max(int(replicates), 1)
+    ade_samples = np.empty(replicate_count, dtype=float)
+    fde_samples = np.empty(replicate_count, dtype=float)
+    f1_samples = np.empty(replicate_count, dtype=float)
+    clusters = list(rows_by_cluster.values())
+    cluster_count = len(clusters)
+    for idx in range(replicate_count):
+        cluster_indices = rng.integers(0, cluster_count, size=cluster_count)
+        sampled_rows = [row for cluster_idx in cluster_indices for row in clusters[int(cluster_idx)]]
+        sampled_ade, sampled_fde, sampled_target, sampled_predicted = row_metrics(sampled_rows)
+        ade_samples[idx] = float(np.mean(sampled_ade))
+        fde_samples[idx] = float(np.mean(sampled_fde))
+        sampled_target_array = np.asarray(sampled_target, dtype=bool)
+        sampled_predicted_array = np.asarray(sampled_predicted, dtype=bool)
+        tp = int(np.sum(sampled_target_array & sampled_predicted_array))
+        fp = int(np.sum(~sampled_target_array & sampled_predicted_array))
+        fn = int(np.sum(sampled_target_array & ~sampled_predicted_array))
+        f1_samples[idx] = 2.0 * tp / max(2 * tp + fp + fn, 1)
+
+    def summary(values: Any, point: float) -> Dict[str, float]:
+        low, high = np.percentile(values, [2.5, 97.5])
+        return {"point": round(float(point), 6), "ci95_low": round(float(low), 6), "ci95_high": round(float(high), 6)}
+
+    tp = int(np.sum(target_array & predicted_array))
+    fp = int(np.sum(~target_array & predicted_array))
+    fn = int(np.sum(target_array & ~predicted_array))
+    f1 = 2.0 * tp / max(2 * tp + fp + fn, 1)
+    return {
+        "method": "cluster-level percentile bootstrap",
+        "seed": int(seed),
+        "replicates": replicate_count,
+        "sample_count": len(predictions),
+        "cluster_key": "clip_name or case_id prefix",
+        "cluster_count": cluster_count,
+        "metrics": {
+            "ade_m": summary(ade_samples, float(np.mean(ade_array))),
+            "fde_m": summary(fde_samples, float(np.mean(fde_array))),
+            "brake_f1": summary(f1_samples, f1),
+        },
+    }
+
+
+def _trajectory_calibration_comparison(
+    predictions: Sequence[Mapping[str, Any]],
+    *,
+    seed: int = 7,
+    replicates: int = 2000,
+) -> Dict[str, Any]:
+    import numpy as np
+
+    rows = [row for row in predictions if row.get("uncalibrated_future_waypoints_ego")]
+    if not rows:
+        return {"enabled": False, "sample_count": 0}
+
+    baseline_ade = []
+    baseline_fde = []
+    calibrated_ade = []
+    calibrated_fde = []
+    clusters = []
+    for row in rows:
+        target = np.asarray(row["target_future_waypoints_ego"], dtype=float)
+        baseline = np.asarray(row["uncalibrated_future_waypoints_ego"], dtype=float)
+        calibrated = np.asarray(row["predicted_future_waypoints_ego"], dtype=float)
+        baseline_distance = np.linalg.norm(baseline - target, axis=-1)
+        calibrated_distance = np.linalg.norm(calibrated - target, axis=-1)
+        baseline_ade.append(float(np.mean(baseline_distance)))
+        baseline_fde.append(float(baseline_distance[-1]))
+        calibrated_ade.append(float(np.mean(calibrated_distance)))
+        calibrated_fde.append(float(calibrated_distance[-1]))
+        case_id = str(row.get("case_id") or "unknown")
+        clusters.append(str(row.get("clip_name") or case_id.rsplit(":", 1)[0] or case_id))
+
+    baseline_ade_array = np.asarray(baseline_ade, dtype=float)
+    baseline_fde_array = np.asarray(baseline_fde, dtype=float)
+    calibrated_ade_array = np.asarray(calibrated_ade, dtype=float)
+    calibrated_fde_array = np.asarray(calibrated_fde, dtype=float)
+    cluster_names = sorted(set(clusters))
+    cluster_indices = {
+        name: np.asarray([idx for idx, cluster in enumerate(clusters) if cluster == name], dtype=int)
+        for name in cluster_names
+    }
+    rng = np.random.default_rng(int(seed))
+    ade_deltas = np.zeros(max(int(replicates), 1), dtype=float)
+    fde_deltas = np.zeros(max(int(replicates), 1), dtype=float)
+    for replicate_idx in range(len(ade_deltas)):
+        sampled = rng.choice(cluster_names, size=len(cluster_names), replace=True)
+        indices = np.concatenate([cluster_indices[name] for name in sampled])
+        ade_deltas[replicate_idx] = float(
+            np.mean(calibrated_ade_array[indices] - baseline_ade_array[indices])
+        )
+        fde_deltas[replicate_idx] = float(
+            np.mean(calibrated_fde_array[indices] - baseline_fde_array[indices])
+        )
+
+    def metric_summary(baseline: Any, calibrated: Any, deltas: Any) -> Dict[str, float]:
+        ci_low, ci_high = np.percentile(deltas, [2.5, 97.5])
+        return {
+            "baseline": round(float(np.mean(baseline)), 6),
+            "calibrated": round(float(np.mean(calibrated)), 6),
+            "delta": round(float(np.mean(calibrated - baseline)), 6),
+            "delta_ci95_low": round(float(ci_low), 6),
+            "delta_ci95_high": round(float(ci_high), 6),
+        }
+
+    return {
+        "enabled": True,
+        "method": "paired clip-level percentile bootstrap",
+        "sample_count": len(rows),
+        "cluster_count": len(cluster_names),
+        "replicates": len(ade_deltas),
+        "metrics": {
+            "ade_m": metric_summary(baseline_ade_array, calibrated_ade_array, ade_deltas),
+            "fde_m": metric_summary(baseline_fde_array, calibrated_fde_array, fde_deltas),
+        },
+    }
 
 
 def _batch_to_device(batch: Mapping[str, Any], device: Any) -> Tuple[Any, Any, Any, Any, Any]:
@@ -1644,6 +2743,34 @@ def _planner_losses(
     else:
         waypoint_element_loss = functional.smooth_l1_loss(future_pred, future, reduction="none").reshape(future.shape[0], -1, 2)
         waypoint_per_sample = (waypoint_element_loss * waypoint_axis_weight).mean(dim=(1, 2))
+    selected_element_loss = functional.smooth_l1_loss(
+        future_pred,
+        future,
+        reduction="none",
+    ).reshape(future.shape[0], -1, 2)
+    selected_waypoint_per_sample = (selected_element_loss * waypoint_axis_weight).mean(dim=(1, 2))
+    origin = true_xy.new_zeros((true_xy.shape[0], 1, 2))
+    pred_displacements = torch.diff(torch.cat([origin, pred_xy], dim=1), dim=1)
+    true_displacements = torch.diff(torch.cat([origin, true_xy], dim=1), dim=1)
+    displacement_element_loss = functional.smooth_l1_loss(
+        pred_displacements,
+        true_displacements,
+        reduction="none",
+    )
+    displacement_per_sample = (displacement_element_loss * waypoint_axis_weight).mean(dim=(1, 2))
+    endpoint_element_loss = functional.smooth_l1_loss(
+        pred_xy[:, -1],
+        true_xy[:, -1],
+        reduction="none",
+    )
+    endpoint_per_sample = (endpoint_element_loss * waypoint_axis_weight.reshape(2)).mean(dim=1)
+    pred_path_length = torch.linalg.norm(pred_displacements, dim=2).sum(dim=1)
+    target_path_length = torch.linalg.norm(true_displacements, dim=2).sum(dim=1)
+    path_length_per_sample = functional.smooth_l1_loss(
+        pred_path_length,
+        target_path_length,
+        reduction="none",
+    )
     control_per_sample = functional.smooth_l1_loss(control_pred, control, reduction="none").reshape(control.shape[0], -1).mean(dim=1)
     pos_weight = brake.new_tensor([max(float(config.brake_positive_weight), 1e-6)])
     brake_per_sample = functional.binary_cross_entropy_with_logits(
@@ -1653,10 +2780,18 @@ def _planner_losses(
         reduction="none",
     ).reshape(-1)
     waypoint_loss = (waypoint_per_sample * sample_weight).mean()
+    selected_waypoint_loss = (selected_waypoint_per_sample * sample_weight).mean()
+    displacement_loss = (displacement_per_sample * sample_weight).mean()
+    endpoint_loss = (endpoint_per_sample * sample_weight).mean()
+    path_length_loss = (path_length_per_sample * sample_weight).mean()
     control_loss = (control_per_sample * sample_weight).mean()
     brake_loss = (brake_per_sample * sample_weight).mean()
     loss = (
         float(config.waypoint_weight) * waypoint_loss
+        + float(config.selected_waypoint_weight) * selected_waypoint_loss
+        + float(config.displacement_weight) * displacement_loss
+        + float(config.endpoint_weight) * endpoint_loss
+        + float(config.path_length_weight) * path_length_loss
         + float(config.control_weight) * control_loss
         + float(config.brake_weight) * brake_loss
         + float(config.mode_classification_weight) * mode_loss
@@ -1683,6 +2818,10 @@ def _planner_losses(
     return {
         "loss": loss,
         "waypoint_loss": waypoint_loss,
+        "selected_waypoint_loss": selected_waypoint_loss,
+        "displacement_loss": displacement_loss,
+        "endpoint_loss": endpoint_loss,
+        "path_length_loss": path_length_loss,
         "control_loss": control_loss,
         "brake_loss": brake_loss,
         "mode_loss": mode_loss,
@@ -1696,6 +2835,9 @@ def _planner_losses(
         "turn_final_lateral_mae_m": turn_final_lateral_error,
         "pred_final_lateral_abs_m": pred_final_lateral_abs,
         "target_final_lateral_abs_m": target_final_lateral_abs,
+        "pred_path_length_m": pred_path_length.mean(),
+        "target_path_length_m": target_path_length.mean(),
+        "path_length_ratio": (pred_path_length / target_path_length.clamp_min(1e-6)).mean(),
         "turn_sample_rate": turn_positive.float().mean(),
         "brake_accuracy": brake_acc,
         "brake_tp_rate": true_positive,

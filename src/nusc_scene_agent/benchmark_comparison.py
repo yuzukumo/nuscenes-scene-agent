@@ -9,6 +9,11 @@ from typing import Dict, List, Sequence
 
 from jinja2 import Template
 
+from nusc_scene_agent.score_semantics import (
+    get_best_validation_quality_score,
+    get_mean_best_validation_quality_score,
+)
+
 
 DEFAULT_BENCHMARK_PROFILES = [
     {
@@ -130,7 +135,7 @@ LEADERBOARD_TEMPLATE = Template(
     </p>
     <div>
       <span class="pill">Sort: Scenario Group Success@1</span>
-      <span class="pill">Tie-break: Scene@1, Actor@1, Mean Event IoU, Mean Best Score</span>
+      <span class="pill">Tie-break: Scene@1, Actor@1, Mean Event IoU, Mean Best Validation Quality</span>
     </div>
   </div>
 
@@ -142,14 +147,14 @@ LEADERBOARD_TEMPLATE = Template(
           <th>Rank</th>
           <th>Profile</th>
           <th>Mode</th>
-          <th>Pass@1</th>
+          <th>Validation Acceptance@1</th>
           <th>Scene@1</th>
           <th>Actor@1</th>
           <th>Reference@1</th>
           <th>Scenario Group Success@1</th>
           <th>Mean Event IoU</th>
           <th>Mean Peak Error</th>
-          <th>Mean Best Score</th>
+          <th>Mean Best Validation Quality</th>
         </tr>
       </thead>
       <tbody>
@@ -158,14 +163,14 @@ LEADERBOARD_TEMPLATE = Template(
           <td class="rank">{{ row.rank }}</td>
           <td class="{{ 'top' if row.rank == 1 else '' }}">{{ row.label }}</td>
           <td><code>{{ row.query_mode }}</code> + <code>{{ row.rerank_mode }}</code></td>
-          <td>{{ row.pass_at_1_count }}/{{ row.query_count }} ({{ "%.1f"|format(row.pass_at_1_rate * 100.0) }}%)</td>
+          <td>{{ row.validation_acceptance_at_1_count }}/{{ row.query_count }} ({{ "%.1f"|format(row.validation_acceptance_at_1_rate * 100.0) }}%)</td>
           <td>{{ row.scene_objective_at_1_count }}/{{ row.reference_query_count }} ({{ "%.1f"|format(row.scene_objective_at_1_rate * 100.0) }}%)</td>
           <td>{{ row.actor_objective_at_1_count }}/{{ row.reference_query_count }} ({{ "%.1f"|format(row.actor_objective_at_1_rate * 100.0) }}%)</td>
           <td>{{ row.reference_objective_at_1_count }}/{{ row.reference_query_count }} ({{ "%.1f"|format(row.reference_objective_at_1_rate * 100.0) }}%)</td>
           <td>{{ row.scenario_group_scene_success_at_1_count }}/{{ row.scenario_group_count }} ({{ "%.1f"|format(row.scenario_group_scene_success_at_1_rate * 100.0) }}%)</td>
           <td>{{ "%.3f"|format(row.mean_event_iou) }}</td>
           <td>{{ "%.2f"|format(row.mean_peak_error) }}</td>
-          <td>{{ "%.2f"|format(row.mean_best_validation_score) }}</td>
+          <td>{{ "%.2f"|format(row.mean_best_validation_quality_score) }}</td>
         </tr>
       {% endfor %}
       </tbody>
@@ -273,7 +278,7 @@ BEHAVIOR_ANALYSIS_TEMPLATE = Template(
       <thead>
         <tr>
           <th>Profile</th>
-          <th>Pass@1</th>
+          <th>Validation Acceptance@1</th>
           <th>Scene@1</th>
           <th>Actor@1</th>
           <th>Reference@1</th>
@@ -287,7 +292,7 @@ BEHAVIOR_ANALYSIS_TEMPLATE = Template(
         {% set item = row.profile_summary[name] %}
         <tr>
           <td>{{ item.label }}</td>
-          <td>{{ item.pass_at_1_count }}/{{ item.query_count }} ({{ "%.1f"|format(item.pass_at_1_rate * 100.0) }}%)</td>
+          <td>{{ item.validation_acceptance_at_1_count }}/{{ item.query_count }} ({{ "%.1f"|format(item.validation_acceptance_at_1_rate * 100.0) }}%)</td>
           <td>{{ item.scene_objective_at_1_count }}/{{ item.query_count }} ({{ "%.1f"|format(item.scene_objective_at_1_rate * 100.0) }}%)</td>
           <td>{{ item.actor_objective_at_1_count }}/{{ item.query_count }} ({{ "%.1f"|format(item.actor_objective_at_1_rate * 100.0) }}%)</td>
           <td>{{ item.reference_objective_at_1_count }}/{{ item.query_count }} ({{ "%.1f"|format(item.reference_objective_at_1_rate * 100.0) }}%)</td>
@@ -333,6 +338,19 @@ def _ratio(numerator: int, denominator: int) -> float:
     if denominator <= 0:
         return 0.0
     return float(numerator) / float(denominator)
+
+
+def _canonical_metric(
+    row: Dict[str, object],
+    canonical_name: str,
+    legacy_name: str,
+    default: object,
+) -> object:
+    if canonical_name in row and row[canonical_name] is not None:
+        return row[canonical_name]
+    if legacy_name in row and row[legacy_name] is not None:
+        return row[legacy_name]
+    return default
 
 
 def _sorted_unique(items: Sequence[str]) -> List[str]:
@@ -393,7 +411,7 @@ def _build_leaderboard(profile_rows: Sequence[Dict[str, object]]) -> List[Dict[s
             float(item["actor_objective_at_1_rate"]),
             float(item["reference_objective_at_1_rate"]),
             float(item["mean_event_iou"]),
-            float(item["mean_best_validation_score"]),
+            float(item["mean_best_validation_quality_score"]),
         ),
         reverse=True,
     )
@@ -425,7 +443,7 @@ def _build_behavior_error_analysis(
                     "profiles": {
                         name: {
                             "query_count": 0,
-                            "pass_at_1_count": 0,
+                            "validation_acceptance_at_1_count": 0,
                             "scene_objective_at_1_count": 0,
                             "actor_objective_at_1_count": 0,
                             "reference_objective_at_1_count": 0,
@@ -447,7 +465,9 @@ def _build_behavior_error_analysis(
                 metrics = dict(row["profiles"].get(profile_name) or {})
                 profile_bucket = dict(bucket["profiles"][profile_name])
                 profile_bucket["query_count"] += 1
-                profile_bucket["pass_at_1_count"] += int(bool(metrics.get("pass_at_1")))
+                profile_bucket["validation_acceptance_at_1_count"] += int(
+                    bool(metrics.get("validation_acceptance_at_1"))
+                )
                 profile_bucket["scene_objective_at_1_count"] += int(bool(metrics.get("scene_objective_at_1")))
                 profile_bucket["actor_objective_at_1_count"] += int(bool(metrics.get("actor_objective_at_1")))
                 profile_bucket["reference_objective_at_1_count"] += int(bool(metrics.get("reference_objective_at_1")))
@@ -504,8 +524,13 @@ def _build_behavior_error_analysis(
                 "label": profile_labels.get(profile_name, profile_name),
                 "query_count": int(profile_bucket["query_count"]),
                 "best_profile_query_wins": int(best_profile_counts.get(profile_name, 0)),
-                "pass_at_1_count": int(profile_bucket["pass_at_1_count"]),
-                "pass_at_1_rate": _ratio(int(profile_bucket["pass_at_1_count"]), int(profile_bucket["query_count"])),
+                "validation_acceptance_at_1_count": int(
+                    profile_bucket["validation_acceptance_at_1_count"]
+                ),
+                "validation_acceptance_at_1_rate": _ratio(
+                    int(profile_bucket["validation_acceptance_at_1_count"]),
+                    int(profile_bucket["query_count"]),
+                ),
                 "scene_objective_at_1_count": int(profile_bucket["scene_objective_at_1_count"]),
                 "scene_objective_at_1_rate": _ratio(
                     int(profile_bucket["scene_objective_at_1_count"]),
@@ -570,6 +595,39 @@ def build_benchmark_comparison(profile_runs: Sequence[Dict[str, object]]) -> Dic
         overview = dict(metrics.get("overview") or {})
         reference_metrics = dict(metrics.get("reference_metrics") or {})
         scenario_overview = dict(scenario_summary.get("overview") or {})
+        mean_quality = get_mean_best_validation_quality_score(overview)
+        validation_at_1_count = int(
+            _canonical_metric(
+                overview,
+                "validation_acceptance_at_1_count",
+                "pass_at_1_count",
+                0,
+            )
+        )
+        validation_at_1_rate = float(
+            _canonical_metric(
+                overview,
+                "validation_acceptance_at_1_rate",
+                "pass_at_1_rate",
+                0.0,
+            )
+        )
+        validation_at_k_count = int(
+            _canonical_metric(
+                overview,
+                "validation_acceptance_at_k_count",
+                "pass_at_k_count",
+                0,
+            )
+        )
+        validation_at_k_rate = float(
+            _canonical_metric(
+                overview,
+                "validation_acceptance_at_k_rate",
+                "pass_at_k_rate",
+                0.0,
+            )
+        )
         profile_entry = {
             "name": str(run["name"]),
             "label": str(run.get("label") or run["name"]),
@@ -578,11 +636,18 @@ def build_benchmark_comparison(profile_runs: Sequence[Dict[str, object]]) -> Dic
             "rerank_mode": str(run.get("rerank_mode") or ""),
             "output_dir": str(output_dir),
             "query_count": int(overview.get("query_count") or 0),
-            "pass_at_1_count": int(overview.get("pass_at_1_count") or 0),
-            "pass_at_1_rate": float(overview.get("pass_at_1_rate") or 0.0),
-            "pass_at_k_count": int(overview.get("pass_at_k_count") or 0),
-            "pass_at_k_rate": float(overview.get("pass_at_k_rate") or 0.0),
-            "mean_best_validation_score": float(overview.get("mean_best_validation_score") or 0.0),
+            "validation_acceptance_at_1_count": validation_at_1_count,
+            "validation_acceptance_at_1_rate": validation_at_1_rate,
+            "validation_acceptance_at_k_count": validation_at_k_count,
+            "validation_acceptance_at_k_rate": validation_at_k_rate,
+            # Compatibility aliases for consumers of comparison artifacts
+            # written before acceptance semantics were named explicitly.
+            "pass_at_1_count": validation_at_1_count,
+            "pass_at_1_rate": validation_at_1_rate,
+            "pass_at_k_count": validation_at_k_count,
+            "pass_at_k_rate": validation_at_k_rate,
+            "mean_best_validation_quality_score": mean_quality,
+            "mean_best_validation_score": mean_quality,
             "unique_case_count": int(overview.get("unique_case_count") or 0),
             "hard_case_count": int((taxonomy.get("overview") or {}).get("hard_case_count") or 0),
             "failed_hard_case_count": int((taxonomy.get("overview") or {}).get("failed_count") or 0),
@@ -620,10 +685,29 @@ def build_benchmark_comparison(profile_runs: Sequence[Dict[str, object]]) -> Dic
                     "profiles": {},
                 },
             )
+            validation_at_1 = bool(
+                _canonical_metric(
+                    row,
+                    "validation_acceptance_at_1",
+                    "pass_at_1",
+                    False,
+                )
+            )
+            validation_at_k = bool(
+                _canonical_metric(
+                    row,
+                    "validation_acceptance_at_k",
+                    "pass_at_k",
+                    False,
+                )
+            )
             query_entry["profiles"][profile_entry["name"]] = {
-                "pass_at_1": bool(row.get("pass_at_1")),
-                "pass_at_k": bool(row.get("pass_at_k")),
-                "best_validation_score": float(row.get("best_validation_score") or 0.0),
+                "validation_acceptance_at_1": validation_at_1,
+                "validation_acceptance_at_k": validation_at_k,
+                "pass_at_1": validation_at_1,
+                "pass_at_k": validation_at_k,
+                "best_validation_quality_score": get_best_validation_quality_score(row),
+                "best_validation_score": get_best_validation_quality_score(row),
                 "selected_count": int(row.get("selected_count") or 0),
                 "passed_count": int(row.get("passed_count") or 0),
                 "scene_objective_at_1": row.get("scene_objective_at_1"),
@@ -648,7 +732,7 @@ def build_benchmark_comparison(profile_runs: Sequence[Dict[str, object]]) -> Dic
         signatures = set()
         for profile_name in profile_name_order:
             profile_metrics = dict(row["profiles"].get(profile_name) or {})
-            score = float(profile_metrics.get("best_validation_score") or 0.0)
+            score = get_best_validation_quality_score(profile_metrics)
             if score > best_score:
                 best_profile = profile_name
                 best_score = score
@@ -672,11 +756,11 @@ def build_benchmark_comparison(profile_runs: Sequence[Dict[str, object]]) -> Dic
                 "signal_divergence": len(signatures) > 1,
                 "score_span": round(
                     max(
-                        float((row["profiles"].get(profile_name) or {}).get("best_validation_score") or 0.0)
+                        get_best_validation_quality_score(row["profiles"].get(profile_name) or {})
                         for profile_name in profile_name_order
                     )
                     - min(
-                        float((row["profiles"].get(profile_name) or {}).get("best_validation_score") or 0.0)
+                        get_best_validation_quality_score(row["profiles"].get(profile_name) or {})
                         for profile_name in profile_name_order
                     ),
                     2,
@@ -694,15 +778,15 @@ def build_benchmark_comparison(profile_runs: Sequence[Dict[str, object]]) -> Dic
             improved_queries = 0
             unchanged_queries = 0
             degraded_queries = 0
-            pass_at_1_gain = 0
-            pass_at_k_gain = 0
+            validation_acceptance_at_1_gain = 0
+            validation_acceptance_at_k_gain = 0
             score_deltas: List[float] = []
 
             for row in query_comparison:
                 baseline = baseline_rows.get(row["id"], {})
                 current = dict(row["profiles"].get(profile_name) or {})
-                baseline_score = float(baseline.get("best_validation_score") or 0.0)
-                current_score = float(current.get("best_validation_score") or 0.0)
+                baseline_score = get_best_validation_quality_score(baseline)
+                current_score = get_best_validation_quality_score(current)
                 score_delta = round(current_score - baseline_score, 2)
                 score_deltas.append(score_delta)
 
@@ -713,8 +797,12 @@ def build_benchmark_comparison(profile_runs: Sequence[Dict[str, object]]) -> Dic
                 else:
                     unchanged_queries += 1
 
-                pass_at_1_gain += int(bool(current.get("pass_at_1"))) - int(bool(baseline.get("pass_at_1")))
-                pass_at_k_gain += int(bool(current.get("pass_at_k"))) - int(bool(baseline.get("pass_at_k")))
+                validation_acceptance_at_1_gain += int(
+                    bool(current.get("validation_acceptance_at_1"))
+                ) - int(bool(baseline.get("validation_acceptance_at_1")))
+                validation_acceptance_at_k_gain += int(
+                    bool(current.get("validation_acceptance_at_k"))
+                ) - int(bool(baseline.get("validation_acceptance_at_k")))
 
             deltas_vs_baseline.append(
                 {
@@ -724,8 +812,10 @@ def build_benchmark_comparison(profile_runs: Sequence[Dict[str, object]]) -> Dic
                     "unchanged_queries": unchanged_queries,
                     "degraded_queries": degraded_queries,
                     "mean_score_delta": round(mean(score_deltas), 2) if score_deltas else 0.0,
-                    "pass_at_1_gain": pass_at_1_gain,
-                    "pass_at_k_gain": pass_at_k_gain,
+                    "validation_acceptance_at_1_gain": validation_acceptance_at_1_gain,
+                    "validation_acceptance_at_k_gain": validation_acceptance_at_k_gain,
+                    "pass_at_1_gain": validation_acceptance_at_1_gain,
+                    "pass_at_k_gain": validation_acceptance_at_k_gain,
                 }
             )
 
@@ -775,7 +865,7 @@ def write_benchmark_comparison(comparison: Dict[str, object], output_dir: Path) 
         "",
         "## Profile Overview",
         "",
-        "| Profile | Query Mode | Rerank | Pass@1 | Pass@K | Mean Best Score | Unique Cases | Hard Cases | Top Taxonomy |",
+        "| Profile | Query Mode | Rerank | Validation Acceptance@1 | Validation Acceptance@K | Mean Best Validation Quality | Unique Cases | Hard Cases | Top Taxonomy |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in profile_rows:
@@ -784,12 +874,12 @@ def write_benchmark_comparison(comparison: Dict[str, object], output_dir: Path) 
                 row["label"],
                 row["query_mode"],
                 row["rerank_mode"],
-                row["pass_at_1_count"],
+                row["validation_acceptance_at_1_count"],
                 row["query_count"],
-                row["pass_at_1_rate"],
-                row["pass_at_k_count"],
-                row["pass_at_k_rate"],
-                row["mean_best_validation_score"],
+                row["validation_acceptance_at_1_rate"],
+                row["validation_acceptance_at_k_count"],
+                row["validation_acceptance_at_k_rate"],
+                row["mean_best_validation_quality_score"],
                 row["unique_case_count"],
                 row["hard_case_count"],
                 row["top_taxonomy_label"],
@@ -802,7 +892,7 @@ def write_benchmark_comparison(comparison: Dict[str, object], output_dir: Path) 
                 "",
                 "## Leaderboard",
                 "",
-                "| Rank | Profile | Pass@1 | Scene@1 | Actor@1 | Reference@1 | Scenario Group Success@1 | Mean Event IoU | Mean Peak Error |",
+                "| Rank | Profile | Validation Acceptance@1 | Scene@1 | Actor@1 | Reference@1 | Scenario Group Success@1 | Mean Event IoU | Mean Peak Error |",
                 "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
@@ -811,9 +901,9 @@ def write_benchmark_comparison(comparison: Dict[str, object], output_dir: Path) 
                 "| {0} | {1} | {2}/{3} ({4:.1%}) | {5}/{6} ({7:.1%}) | {8}/{6} ({9:.1%}) | {10}/{6} ({11:.1%}) | {12}/{13} ({14:.1%}) | {15:.3f} | {16:.2f} |".format(
                     row["rank"],
                     row["label"],
-                    row["pass_at_1_count"],
+                    row["validation_acceptance_at_1_count"],
                     row["query_count"],
-                    row["pass_at_1_rate"],
+                    row["validation_acceptance_at_1_rate"],
                     row["scene_objective_at_1_count"],
                     row["reference_query_count"],
                     row["scene_objective_at_1_rate"],
@@ -835,7 +925,7 @@ def write_benchmark_comparison(comparison: Dict[str, object], output_dir: Path) 
                 "",
                 "## Delta vs Baseline",
                 "",
-                "| Profile | Improved Queries | Unchanged | Degraded | Mean Score Delta | Pass@1 Gain | Pass@K Gain |",
+                "| Profile | Improved Queries | Unchanged | Degraded | Mean Validation Quality Delta | Acceptance@1 Gain | Acceptance@K Gain |",
                 "| --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
@@ -847,8 +937,8 @@ def write_benchmark_comparison(comparison: Dict[str, object], output_dir: Path) 
                     row["unchanged_queries"],
                     row["degraded_queries"],
                     row["mean_score_delta"],
-                    row["pass_at_1_gain"],
-                    row["pass_at_k_gain"],
+                    row["validation_acceptance_at_1_gain"],
+                    row["validation_acceptance_at_k_gain"],
                 )
             )
 
@@ -948,8 +1038,8 @@ def write_benchmark_comparison(comparison: Dict[str, object], output_dir: Path) 
                 metrics = dict(row["profiles"].get(profile_name) or {})
                 cells.append(
                     "{0}/{1:.2f}".format(
-                        "T" if metrics.get("pass_at_1") else "F",
-                        float(metrics.get("best_validation_score") or 0.0),
+                        "T" if metrics.get("validation_acceptance_at_1") else "F",
+                        get_best_validation_quality_score(metrics),
                     )
                 )
             cells.append(profile_labels.get(str(row["best_profile"]), str(row["best_profile"])))
@@ -992,8 +1082,8 @@ def write_benchmark_comparison(comparison: Dict[str, object], output_dir: Path) 
                 "query_mode",
                 "rerank_mode",
                 "query_count",
-                "pass_at_1_count",
-                "pass_at_1_rate",
+                "validation_acceptance_at_1_count",
+                "validation_acceptance_at_1_rate",
                 "scene_objective_at_1_count",
                 "reference_query_count",
                 "scene_objective_at_1_rate",
@@ -1006,7 +1096,7 @@ def write_benchmark_comparison(comparison: Dict[str, object], output_dir: Path) 
                 "scenario_group_scene_success_at_1_rate",
                 "mean_event_iou",
                 "mean_peak_error",
-                "mean_best_validation_score",
+                "mean_best_validation_quality_score",
                 "hard_case_count",
                 "top_taxonomy_label",
             ],
@@ -1033,7 +1123,7 @@ def write_benchmark_comparison(comparison: Dict[str, object], output_dir: Path) 
                 "- Divergent queries: {0}".format(row["divergent_query_count"]),
                 "- Best-profile wins: {0}".format(row["best_profile_summary"]),
                 "",
-                "| Profile | Pass@1 | Scene@1 | Actor@1 | Reference@1 | Mean Event IoU | Mean Peak Error | Top Failure Modes |",
+                "| Profile | Validation Acceptance@1 | Scene@1 | Actor@1 | Reference@1 | Mean Event IoU | Mean Peak Error | Top Failure Modes |",
                 "| --- | --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
@@ -1042,9 +1132,9 @@ def write_benchmark_comparison(comparison: Dict[str, object], output_dir: Path) 
             behavior_lines.append(
                 "| {0} | {1}/{2} ({3:.1%}) | {4}/{2} ({5:.1%}) | {6}/{2} ({7:.1%}) | {8}/{2} ({9:.1%}) | {10:.3f} | {11:.2f} | {12} |".format(
                     item["label"],
-                    item["pass_at_1_count"],
+                    item["validation_acceptance_at_1_count"],
                     item["query_count"],
-                    item["pass_at_1_rate"],
+                    item["validation_acceptance_at_1_rate"],
                     item["scene_objective_at_1_count"],
                     item["scene_objective_at_1_rate"],
                     item["actor_objective_at_1_count"],
@@ -1069,8 +1159,8 @@ def write_benchmark_comparison(comparison: Dict[str, object], output_dir: Path) 
                 "query_count",
                 "divergent_query_count",
                 "best_profile_query_wins",
-                "pass_at_1_count",
-                "pass_at_1_rate",
+                "validation_acceptance_at_1_count",
+                "validation_acceptance_at_1_rate",
                 "scene_objective_at_1_count",
                 "scene_objective_at_1_rate",
                 "actor_objective_at_1_count",
@@ -1103,8 +1193,12 @@ def write_benchmark_comparison(comparison: Dict[str, object], output_dir: Path) 
                         "query_count": row["query_count"],
                         "divergent_query_count": row["divergent_query_count"],
                         "best_profile_query_wins": item["best_profile_query_wins"],
-                        "pass_at_1_count": item["pass_at_1_count"],
-                        "pass_at_1_rate": item["pass_at_1_rate"],
+                        "validation_acceptance_at_1_count": item[
+                            "validation_acceptance_at_1_count"
+                        ],
+                        "validation_acceptance_at_1_rate": item[
+                            "validation_acceptance_at_1_rate"
+                        ],
                         "scene_objective_at_1_count": item["scene_objective_at_1_count"],
                         "scene_objective_at_1_rate": item["scene_objective_at_1_rate"],
                         "actor_objective_at_1_count": item["actor_objective_at_1_count"],

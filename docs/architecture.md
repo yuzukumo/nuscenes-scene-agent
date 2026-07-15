@@ -18,6 +18,7 @@ The target workflow is:
 
 - parse `nuScenes` samples, annotations, ego poses, and map metadata
 - build a compact `SQLite` index for fast candidate retrieval
+- record schema name, schema version, dataset version, and dataroot in index metadata
 - keep the runtime compact for repeated experiments
 
 ### 2. Query planning
@@ -29,8 +30,12 @@ The target workflow is:
 ## 3. Retrieval
 
 - filter and score candidates using actor type, relative position, behavior labels, and temporal context
+- compute the retrieval score with vectorized `pandas`/`numpy` operations over the candidate frame
+- keep retrieval score weights in a named constant so result metadata and audits can reference the active scoring profile
+- run `default` and `equal` score profiles through the same query suite and export sensitivity artifacts
 - support scenario families such as `crossing`, `cut_in`, `oncoming`, and `stopped_lead`
 - batch temporal feature loading where needed to avoid large-query `SQLite` failures
+- use a recorded nearest-distance prefilter (`candidate_scan_limit=50,000` by default); setting it to `0` enables a full scan for exact retrieval at higher cost
 
 ## 4. Validation
 
@@ -38,6 +43,9 @@ The target workflow is:
 - estimate risk-related signals such as proximity and TTC
 - use map context for lane relation, road direction, crosswalk preference, and walkway support
 - keep validation deterministic so benchmark behavior is inspectable and reproducible
+- export validation component scores, score weights, pass-gate thresholds, and behavior thresholds with each validated case
+- separate continuous validation quality from the binary acceptance gate; accepted cases take precedence for benchmark selection, while ungated maxima remain diagnostic only
+- load all context agents at the anchor sample instead of applying a fixed top-k truncation
 - localize the critical event window with start, end, and peak sample indices
 - export grounded primary-actor metadata for scenario-level reporting
 
@@ -170,7 +178,6 @@ The layer also includes:
 - proxy rollout generators for controlled studies
 - an adapter for compact external rollout formats keyed by benchmark group or reference case
 - an adapter for `nuScenes prediction challenge` style multi-modal forecast outputs keyed by `(instance, sample)`
-- direct execution of the official `nuScenes` physics forecast baselines on benchmark anchors
 - per-case `CSV`, `JSON`, `Markdown`, and `HTML` evaluation exports
 - multi-profile comparison exports for behavior-wise and risk-wise analysis
 - challenge-track breakdowns for benchmark-style reporting
@@ -269,11 +276,13 @@ The interface includes:
 
 - `scenario_taxonomy_v1` for aligning scenario families across dataset mining, replay, planner training, and simulator evidence
 - `unified_risk_case_v1` for common case metadata across `nuScenes` and `nuPlan`
-- `benchmark_registry_v1` for declaring benchmark layers, inputs, outputs, and metrics
-- `benchmark_result_registry_v1` for summarizing completed benchmark-layer results
+- `benchmark_catalog_v1` for declaring benchmark layers, inputs, outputs, and metrics before execution
+- `benchmark_result_registry_v1` for summarizing completed benchmark-layer results after execution
 - `dataset_backend_inventory_v1` for checking local `nuScenes` and `nuPlan` readiness
-- `benchmark_artifact_manifest_v1` for recording benchmark outputs and evidence artifacts
+- `benchmark_artifact_manifest_v1` for recording concrete output files and evidence artifacts
 - YAML experiment configs for reproducible study entry points
+
+These records have separate ownership: the catalog declares a layer, the result registry indexes its completed reports, and an artifact manifest records file hashes and runtime provenance. The registry JSON is referenced by manifest metadata but excluded from the manifest hash list to avoid a self-referential digest.
 
 Benchmark-specific schemas remain the source of task-level detail. The interface adds a common indexing and reporting layer so scenario mining, perception slices, world-model slices, replay regression, vision-planner validation, and semantic demo mining can be compared as parts of one evaluation framework.
 
@@ -298,16 +307,16 @@ Training data is constructed from:
 
 - rule-mined positives for crossing, stopped-lead, lateral cut-in, and oncoming scenario families
 - near-miss negatives mined from the same trainval SQLite index
-- scene-level validation splits for weak-supervised training
+- scene-level validation splits for weakly supervised training
 - query features from language, actor type, position, behavior, and risk thresholds
 - candidate features from BEV geometry, motion, TTC, and sensor visibility
 - explicit query-candidate compatibility features
 
-The model is a compact pairwise MLP for post-retrieval query-scene scoring. The trained checkpoint is evaluated on weak-supervised held-out scenes and on the reference-aware scenario-mining benchmark.
+The model is a compact pairwise MLP for post-retrieval query-scene scoring. The trained checkpoint is evaluated on weakly supervised held-out scenes and on the reference-aware scenario-mining benchmark. These labels are deterministic anchors produced by the rule pipeline; the resulting metrics measure anchor consistency, not independent semantic recall.
 
 Outputs include a checkpoint, JSON training report, Markdown training summary, and per-query learned retrieval reports. The trained checkpoint can be used through `--rerank-mode learned`.
 
-The failure-aware diagnostic evaluates the learned retriever on update queries produced by failure mining. The learned model expands candidate coverage, and deterministic validation performs final case selection.
+The failure-aware diagnostic evaluates the learned retriever on update queries produced by failure mining. The learned model expands candidate coverage, and deterministic validation performs final case selection. Reports distinguish acceptance-gated best quality from the ungated maximum quality of the evaluated candidate pool.
 
 ## 19. Model-in-the-loop Failure Mining
 
@@ -331,7 +340,7 @@ The graph uses three nodes:
 - `analyze_with_llm` asks the local model for a structured gap analysis and next-action plan
 - `write_report` exports a JSON and Markdown report
 
-Deterministic metrics remain the evidence source. The agent operates after evaluation and is used to inspect completed capabilities, identify remaining gaps, propose benchmark update queries, and list unsupported claims.
+Deterministic metrics remain the evidence source. The agent operates after evaluation and is used to inspect completed capabilities, identify remaining gaps, propose benchmark update queries, and list unsupported claims. Published runs record the resolved Ollama model digest; mutable tags such as `gemma4:latest` are not stable experiment identifiers by themselves.
 
 ## 21. Agent Formulation
 

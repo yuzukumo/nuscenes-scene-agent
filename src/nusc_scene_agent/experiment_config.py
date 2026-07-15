@@ -13,9 +13,14 @@ from nusc_scene_agent.bev_occupancy_benchmark import (
     generate_bev_occupancy_benchmark_from_perception_benchmark,
     run_proxy_bev_occupancy_study,
 )
-from nusc_scene_agent.benchmark_registry import build_default_benchmark_registry, write_benchmark_registry
+from nusc_scene_agent.benchmark_catalog import build_default_benchmark_catalog, write_benchmark_catalog
 from nusc_scene_agent.benchmark_schema import load_benchmark_config
-from nusc_scene_agent.bench2drive_closed_loop import ClosedLoopControlConfig, run_bench2drive_vision_closed_loop
+from nusc_scene_agent.bench2drive_closed_loop import (
+    DEFAULT_BENCH2DRIVE_CLOSED_LOOP_OUTPUT,
+    ClosedLoopControlConfig,
+    run_bench2drive_vision_closed_loop,
+)
+from nusc_scene_agent.bench2drive_e2e import DEFAULT_BENCH2DRIVE_OUTPUT
 from nusc_scene_agent.carla_semantic_demo_mining import mine_carla_semantic_demos
 from nusc_scene_agent.carla_vision_closed_loop import run_carla_vision_closed_loop
 from nusc_scene_agent.case_library import build_case_library, write_case_library
@@ -23,7 +28,12 @@ from nusc_scene_agent.case_library_enrichment import enrich_case_library
 from nusc_scene_agent.dataset_backends import inspect_dataset_backends, write_dataset_backend_inventory
 from nusc_scene_agent.failure_mining import mine_model_failures
 from nusc_scene_agent.failure_aware_reranking import run_failure_aware_reranking_eval
-from nusc_scene_agent.llm_client import DEFAULT_TIMEOUT_S, LLMConfig
+from nusc_scene_agent.llm_client import (
+    DEFAULT_TIMEOUT_S,
+    LLMConfig,
+    inspect_ollama_model,
+    verify_ollama_model,
+)
 from nusc_scene_agent.nuplan_closed_loop import run_nuplan_closed_loop_study
 from nusc_scene_agent.nuplan_closed_loop_sweep import run_nuplan_closed_loop_sweep
 from nusc_scene_agent.nuplan_replay import run_nuplan_replay_study
@@ -81,8 +91,8 @@ def run_experiment_config(config_path: Path) -> Dict[str, Any]:
         result = _run_failure_mining_experiment(config)
     elif experiment_type == "failure_aware_reranking":
         result = _run_failure_aware_reranking_experiment(config)
-    elif experiment_type == "registry_export":
-        result = _run_registry_export_experiment(config)
+    elif experiment_type == "catalog_export":
+        result = _run_catalog_export_experiment(config)
     elif experiment_type == "result_registry":
         result = _run_result_registry_experiment(config)
     else:
@@ -195,7 +205,7 @@ def _run_bench2drive_vision_closed_loop_experiment(config: Mapping[str, Any]) ->
     output_dir = Path(str(closed_loop.get("output") or "outputs/bench2drive_vision_closed_loop_v1"))
     report = run_bench2drive_vision_closed_loop(
         manifest_path=Path(str(closed_loop.get("manifest") or "artifacts/bench2drive/vision_e2e_manifest_tensor_160.jsonl")),
-        checkpoint_path=Path(str(closed_loop.get("checkpoint") or "outputs/bench2drive_vision_e2e_trajectory_transformer_final/vision_e2e_planner_best.pt")),
+        checkpoint_path=Path(str(closed_loop.get("checkpoint") or DEFAULT_BENCH2DRIVE_OUTPUT / "vision_e2e_planner_best.pt")),
         output_dir=output_dir,
         split=str(closed_loop.get("split") or "val"),
         max_cases=int(closed_loop.get("max_cases") or 64),
@@ -203,6 +213,7 @@ def _run_bench2drive_vision_closed_loop_experiment(config: Mapping[str, Any]) ->
         image_size=int(closed_loop.get("image_size") or 160),
         device=str(closed_loop.get("device") or ""),
         video_fps=int(closed_loop.get("video_fps") or 6),
+        render_case_media=bool(closed_loop.get("render_case_media", False)),
         case_selection=str(closed_loop.get("case_selection") or "balanced"),
         control_config=ClosedLoopControlConfig(
             dt_s=float(closed_loop.get("dt_s") if closed_loop.get("dt_s") is not None else 0.5),
@@ -226,7 +237,7 @@ def _run_carla_vision_closed_loop_experiment(config: Mapping[str, Any]) -> Dict[
     output_dir = Path(str(stage.get("output") or "outputs/carla_vision_closed_loop_v1"))
     report = run_carla_vision_closed_loop(
         carla_root=Path(str(stage.get("carla_root") or "external/carla/latest")),
-        checkpoint_path=Path(str(stage.get("checkpoint") or "outputs/bench2drive_vision_e2e_trajectory_transformer_final/vision_e2e_planner_best.pt")),
+        checkpoint_path=Path(str(stage.get("checkpoint") or DEFAULT_BENCH2DRIVE_OUTPUT / "vision_e2e_planner_best.pt")),
         output_dir=output_dir,
         host=str(stage.get("host") or "127.0.0.1"),
         port=int(stage.get("port") or 2000),
@@ -300,12 +311,12 @@ def _run_carla_vision_closed_loop_experiment(config: Mapping[str, Any]) -> Dict[
 
 def _run_carla_semantic_demo_mining_experiment(config: Mapping[str, Any]) -> Dict[str, Any]:
     stage = dict(config.get("carla_semantic_demo") or config.get("carla_semantic_demo_mining") or {})
-    output_dir = Path(str(stage.get("output") or "outputs/carla_semantic_demo_trajectory_transformer_final"))
+    output_dir = Path(str(stage.get("output") or "outputs/carla_semantic_demo_final"))
     result = mine_carla_semantic_demos(
         carla_root=Path(str(stage.get("carla_root") or "external/carla/latest")),
-        checkpoint_path=Path(str(stage.get("checkpoint") or "outputs/bench2drive_vision_e2e_trajectory_transformer_final/vision_e2e_planner_best.pt")),
+        checkpoint_path=Path(str(stage.get("checkpoint") or DEFAULT_BENCH2DRIVE_OUTPUT / "vision_e2e_planner_best.pt")),
         output_dir=output_dir,
-        trials_output_dir=Path(str(stage.get("trials_output") or "outputs/carla_semantic_demo_trajectory_transformer_final_trials")),
+        trials_output_dir=Path(str(stage.get("trials_output") or "outputs/carla_semantic_demo_trials")),
         host=str(stage.get("host") or "127.0.0.1"),
         port_start=int(stage.get("port_start") or 2040),
         town=str(stage.get("town") or "Town10HD_Opt"),
@@ -383,6 +394,7 @@ def _run_carla_semantic_demo_mining_experiment(config: Mapping[str, Any]) -> Dic
         min_nearby_actor_ratio=float(
             stage.get("min_nearby_actor_ratio") if stage.get("min_nearby_actor_ratio") is not None else 0.30
         ),
+        require_hevc=bool(stage.get("require_hevc", True)),
     )
     return result
 
@@ -399,6 +411,19 @@ def _run_case_library_generation_experiment(config: Mapping[str, Any]) -> Dict[s
     query_mode = str(stage.get("query_mode") or "hybrid")
     rerank_mode = str(stage.get("rerank_mode") or "llm")
     llm_config = _stage_llm_config(stage, query_mode=query_mode, rerank_mode=rerank_mode)
+    llm_model_metadata: Dict[str, Any] = {}
+    llm_model_metadata_path = output_dir / "ollama_model_metadata.json"
+    if llm_config is not None:
+        llm_model_metadata = (
+            verify_ollama_model(llm_config)
+            if llm_config.digest or llm_config.require_digest
+            else inspect_ollama_model(llm_config)
+        )
+        llm_config.resolved_digest = str(llm_model_metadata.get("digest") or "")
+        llm_model_metadata_path.write_text(
+            json.dumps(llm_model_metadata, indent=2),
+            encoding="utf-8",
+        )
 
     summaries: List[Dict[str, Any]] = []
     benchmark_results: List[Dict[str, Any]] = []
@@ -454,6 +479,8 @@ def _run_case_library_generation_experiment(config: Mapping[str, Any]) -> Dict[s
         "db": str(db_path),
         "query_mode": query_mode,
         "rerank_mode": rerank_mode,
+        "llm": llm_config.to_dict() if llm_config is not None else None,
+        "ollama_model_metadata": str(llm_model_metadata_path) if llm_model_metadata else "",
         "query_count": len(summaries),
         "case_count": len(case_library_entries),
         "case_library": str(case_library_path),
@@ -672,16 +699,16 @@ def _run_risk_benchmark_suite_experiment(config: Mapping[str, Any]) -> Dict[str,
     }
 
 
-def _run_registry_export_experiment(config: Mapping[str, Any]) -> Dict[str, Any]:
-    output_dir = Path(str(dict(config.get("experiment") or {}).get("output") or "outputs/registry_export"))
+def _run_catalog_export_experiment(config: Mapping[str, Any]) -> Dict[str, Any]:
+    output_dir = Path(str(dict(config.get("experiment") or {}).get("output") or "outputs/catalog_export"))
     output_dir.mkdir(parents=True, exist_ok=True)
-    registry = write_benchmark_registry(output_dir / "benchmark_registry.json", build_default_benchmark_registry())
+    catalog = write_benchmark_catalog(output_dir / "benchmark_catalog.json", build_default_benchmark_catalog())
     inventory = write_dataset_backend_inventory(inspect_dataset_backends(), output_dir / "dataset_backends.json")
     return {
         "output_dir": str(output_dir),
-        "benchmark_registry": {
-            "path": str(output_dir / "benchmark_registry.json"),
-            "layer_count": len(registry.get("layers", {})),
+        "benchmark_catalog": {
+            "path": str(output_dir / "benchmark_catalog.json"),
+            "layer_count": len(catalog.get("layers", {})),
         },
         "dataset_backends": {
             "path": str(output_dir / "dataset_backends.json"),
@@ -788,10 +815,26 @@ def _stage_llm_config(stage: Mapping[str, Any], *, query_mode: str, rerank_mode:
         or os.getenv("NUSC_SCENE_AGENT_OLLAMA_MODEL")
         or DEFAULT_OLLAMA_MODEL
     ).strip()
+    digest = str(
+        llm.get("digest")
+        or os.getenv("NUSC_SCENE_AGENT_OLLAMA_DIGEST")
+        or ""
+    ).strip()
     timeout_s = float(llm.get("timeout_s") or os.getenv("NUSC_SCENE_AGENT_OLLAMA_TIMEOUT_S") or DEFAULT_TIMEOUT_S)
+    require_digest = bool(
+        llm.get("require_digest")
+        or str(os.getenv("NUSC_SCENE_AGENT_OLLAMA_REQUIRE_DIGEST") or "").strip().lower()
+        in {"1", "true", "yes"}
+    )
     if not base_url or not model:
         raise ValueError("Ollama base URL and model are required for LLM-backed experiment stages.")
-    return LLMConfig(base_url=base_url, model=model, timeout_s=timeout_s)
+    return LLMConfig(
+        base_url=base_url,
+        model=model,
+        timeout_s=timeout_s,
+        digest=digest,
+        require_digest=require_digest,
+    )
 
 
 def _stage_enabled(suite: Mapping[str, Any], name: str, *, default: bool) -> bool:

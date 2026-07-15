@@ -1,0 +1,5 @@
+experiment:
+  id: catalog_export
+  type: catalog_export
+  output: outputs/catalog_export
+  result_path: outputs/catalog_export/experiment_result.json

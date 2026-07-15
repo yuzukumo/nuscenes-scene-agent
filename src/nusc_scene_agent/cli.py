@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from nusc_scene_agent.benchmark_comparison import (
     build_benchmark_comparison,
@@ -35,14 +36,18 @@ from nusc_scene_agent.bench2drive_e2e import (
     DEFAULT_BENCH2DRIVE_TENSOR_MANIFEST,
     build_bench2drive_vision_manifest,
     build_bench2drive_vision_tensor_cache,
+    calibrate_trajectory_selection,
+    compare_vision_e2e_prediction_sets,
     diagnose_vision_e2e_predictions,
     evaluate_vision_e2e_planner,
     inspect_bench2drive_dataset,
+    resplit_bench2drive_vision_manifest,
     train_vision_e2e_planner,
 )
 from nusc_scene_agent.bench2drive_closed_loop import (
     DEFAULT_BENCH2DRIVE_CLOSED_LOOP_OUTPUT,
     ClosedLoopControlConfig,
+    compare_bench2drive_closed_loop_reports,
     run_bench2drive_vision_closed_loop,
 )
 from nusc_scene_agent.carla_closed_loop import (
@@ -64,7 +69,7 @@ from nusc_scene_agent.carla_semantic_demo_mining import (
 from nusc_scene_agent.carla_video_audit import audit_carla_vision_rollouts
 from nusc_scene_agent.case_library import build_case_library, write_case_library
 from nusc_scene_agent.benchmark_schema import load_benchmark_config
-from nusc_scene_agent.benchmark_registry import build_default_benchmark_registry, write_benchmark_registry
+from nusc_scene_agent.benchmark_catalog import build_default_benchmark_catalog, write_benchmark_catalog
 from nusc_scene_agent.contextvae_integration import (
     DEFAULT_CONTEXTVAE_CHECKPOINT,
     DEFAULT_CONTEXTVAE_OUTPUT,
@@ -81,7 +86,8 @@ from nusc_scene_agent.failure_aware_reranking import (
     run_failure_aware_reranking_eval,
 )
 from nusc_scene_agent.gallery import build_benchmark_gallery, build_comparison_browser
-from nusc_scene_agent.indexing import build_index
+from nusc_scene_agent.human_audit import evaluate_human_audit_set, generate_human_audit_set
+from nusc_scene_agent.indexing import build_index, migrate_index_schema
 from nusc_scene_agent.langgraph_agent import run_langgraph_query_pipeline
 from nusc_scene_agent.learned_retrieval import (
     DEFAULT_LARGE_LEARNED_RETRIEVER_OUTPUT,
@@ -92,7 +98,7 @@ from nusc_scene_agent.learned_retrieval import (
     train_learned_scene_retriever,
     train_weakly_supervised_scene_retriever,
 )
-from nusc_scene_agent.llm_client import DEFAULT_TIMEOUT_S, LLMConfig
+from nusc_scene_agent.llm_client import DEFAULT_TIMEOUT_S, LLMConfig, inspect_ollama_model
 from nusc_scene_agent.multimodal_retrieval import run_multimodal_retrieval_report
 from nusc_scene_agent.nuplan_closed_loop import (
     DEFAULT_NUPLAN_CLOSED_LOOP_OUTPUT,
@@ -127,6 +133,7 @@ from nusc_scene_agent.perception_benchmark import (
     run_proxy_perception_study,
 )
 from nusc_scene_agent.pipeline import run_query_pipeline
+from nusc_scene_agent.retrieval import RETRIEVAL_SCORE_PROFILES, RetrievalScoreConfig
 from nusc_scene_agent.research_agent import (
     DEFAULT_OLLAMA_BASE_URL,
     DEFAULT_OLLAMA_MODEL,
@@ -151,7 +158,7 @@ from nusc_scene_agent.world_model_benchmark import (
     run_nuscenes_forecast_baselines,
     run_proxy_world_model_study,
 )
-from nusc_scene_agent.validation import ValidationConfig
+from nusc_scene_agent.validation import HEURISTIC_THRESHOLDS, VALIDATION_SCORE_PROFILES, ValidationConfig
 from nusc_scene_agent.world_model_case_studies import render_world_model_case_studies
 
 
@@ -167,6 +174,16 @@ DEFAULT_WORLD_MODEL_BENCHMARK = Path("benchmarks/trainval_world_model_slices_v1.
 def _add_llm_connection_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--ollama-base-url", default="")
     parser.add_argument("--ollama-model", default="")
+    parser.add_argument(
+        "--ollama-digest",
+        default="",
+        help="Expected Ollama model digest. A mismatch aborts LLM requests.",
+    )
+    parser.add_argument(
+        "--ollama-require-digest",
+        action="store_true",
+        help="Require an expected Ollama digest before issuing LLM requests.",
+    )
     parser.add_argument("--ollama-timeout", type=float, default=DEFAULT_TIMEOUT_S)
 
 
@@ -175,6 +192,15 @@ def _add_llm_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--rerank-mode", choices=["none", "llm", "multimodal", "learned"], default="none")
     parser.add_argument("--learned-reranker-checkpoint", default="")
     _add_llm_connection_args(parser)
+
+
+def _add_retrieval_score_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--retrieval-score-profile",
+        choices=sorted(RETRIEVAL_SCORE_PROFILES),
+        default="default",
+        help="Retrieval scoring profile used before validation.",
+    )
 
 
 def _resolve_llm_config(
@@ -190,12 +216,26 @@ def _resolve_llm_config(
         or default_base_url
     ).strip()
     model = str(getattr(args, "ollama_model", "") or (env_config.model if env_config else "") or default_model).strip()
+    digest = str(
+        getattr(args, "ollama_digest", "")
+        or (env_config.digest if env_config else "")
+    ).strip()
     timeout_s = float(getattr(args, "ollama_timeout", DEFAULT_TIMEOUT_S))
+    require_digest = bool(
+        getattr(args, "ollama_require_digest", False)
+        or (env_config.require_digest if env_config else False)
+    )
     if not (base_url and model):
         if require:
             raise ValueError("Ollama configuration requires --ollama-base-url and --ollama-model.")
         return None
-    return LLMConfig(base_url=base_url, model=model, timeout_s=timeout_s)
+    return LLMConfig(
+        base_url=base_url,
+        model=model,
+        timeout_s=timeout_s,
+        digest=digest,
+        require_digest=require_digest,
+    )
 
 
 def _optional_path(value: str) -> Optional[Path]:
@@ -222,12 +262,19 @@ def _build_parser() -> argparse.ArgumentParser:
     build_parser.add_argument("--db", default=str(DEFAULT_DB))
     build_parser.add_argument("--scene-limit", type=int, default=0)
 
+    migrate_index_parser = subparsers.add_parser(
+        "migrate-index",
+        help="Validate and stamp a structurally compatible pre-versioned SQLite index.",
+    )
+    migrate_index_parser.add_argument("--db", default=str(DEFAULT_DB))
+
     query_parser = subparsers.add_parser("query", help="Run one natural-language risk query.")
     query_parser.add_argument("text", help="Natural-language risk description.")
     query_parser.add_argument("--db", default=str(DEFAULT_DB))
     query_parser.add_argument("--output", default="outputs/query")
     query_parser.add_argument("--top-k", type=int, default=5)
     query_parser.add_argument("--candidate-pool", type=int, default=12)
+    _add_retrieval_score_args(query_parser)
     _add_llm_args(query_parser)
 
     multimodal_retrieval_parser = subparsers.add_parser(
@@ -326,7 +373,20 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     research_agent_parser.add_argument("--ollama-base-url", default=DEFAULT_OLLAMA_BASE_URL)
     research_agent_parser.add_argument("--ollama-model", default=DEFAULT_OLLAMA_MODEL)
+    research_agent_parser.add_argument("--ollama-digest", default="")
+    research_agent_parser.add_argument("--ollama-require-digest", action="store_true")
     research_agent_parser.add_argument("--ollama-timeout", type=float, default=DEFAULT_TIMEOUT_S)
+
+    inspect_ollama_parser = subparsers.add_parser(
+        "inspect-ollama-model",
+        help="Export local Ollama model metadata for experiment reproducibility.",
+    )
+    inspect_ollama_parser.add_argument("--ollama-base-url", default=DEFAULT_OLLAMA_BASE_URL)
+    inspect_ollama_parser.add_argument("--ollama-model", default=DEFAULT_OLLAMA_MODEL)
+    inspect_ollama_parser.add_argument("--ollama-digest", default="")
+    inspect_ollama_parser.add_argument("--ollama-require-digest", action="store_true")
+    inspect_ollama_parser.add_argument("--ollama-timeout", type=float, default=DEFAULT_TIMEOUT_S)
+    inspect_ollama_parser.add_argument("--output", default="outputs/ollama_model_metadata.json")
 
     failure_mining_parser = subparsers.add_parser(
         "run-failure-mining",
@@ -348,7 +408,59 @@ def _build_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("--db", default=str(DEFAULT_DB))
     benchmark_parser.add_argument("--output", default="outputs/benchmark")
     benchmark_parser.add_argument("--candidate-pool", type=int, default=12)
+    _add_retrieval_score_args(benchmark_parser)
     _add_llm_args(benchmark_parser)
+
+    score_sweep_parser = subparsers.add_parser(
+        "benchmark-score-sweep",
+        help="Run the same benchmark with multiple retrieval scoring profiles.",
+    )
+    score_sweep_parser.add_argument("--config", default=str(DEFAULT_TRAINVAL_BENCHMARK))
+    score_sweep_parser.add_argument("--db", default=str(DEFAULT_DB))
+    score_sweep_parser.add_argument("--output", default="outputs/retrieval_score_profile_sweep_v1")
+    score_sweep_parser.add_argument("--candidate-pool", type=int, default=12)
+    score_sweep_parser.add_argument(
+        "--profile",
+        action="append",
+        default=[],
+        choices=sorted(RETRIEVAL_SCORE_PROFILES),
+        help="Retrieval scoring profile. Repeatable. Defaults to all profiles.",
+    )
+    _add_llm_args(score_sweep_parser)
+
+    threshold_sweep_parser = subparsers.add_parser(
+        "benchmark-threshold-sweep",
+        help="Run the same benchmark with scaled behavior-detection thresholds.",
+    )
+    threshold_sweep_parser.add_argument("--config", default=str(DEFAULT_TRAINVAL_BENCHMARK))
+    threshold_sweep_parser.add_argument("--db", default=str(DEFAULT_DB))
+    threshold_sweep_parser.add_argument("--output", default="outputs/validation_threshold_sweep_v1")
+    threshold_sweep_parser.add_argument("--candidate-pool", type=int, default=12)
+    threshold_sweep_parser.add_argument(
+        "--scale",
+        action="append",
+        type=float,
+        default=[],
+        help="Positive multiplier for metric-valued behavior thresholds. Repeatable; defaults to 0.85, 1.0, 1.15.",
+    )
+    _add_llm_args(threshold_sweep_parser)
+
+    validation_score_sweep_parser = subparsers.add_parser(
+        "benchmark-validation-score-sweep",
+        help="Run the same benchmark with multiple validation-quality weighting profiles.",
+    )
+    validation_score_sweep_parser.add_argument("--config", default=str(DEFAULT_TRAINVAL_BENCHMARK))
+    validation_score_sweep_parser.add_argument("--db", default=str(DEFAULT_DB))
+    validation_score_sweep_parser.add_argument("--output", default="outputs/validation_score_profile_sweep_v1")
+    validation_score_sweep_parser.add_argument("--candidate-pool", type=int, default=12)
+    validation_score_sweep_parser.add_argument(
+        "--profile",
+        action="append",
+        default=[],
+        choices=sorted(VALIDATION_SCORE_PROFILES),
+        help="Validation-quality weighting profile. Repeatable. Defaults to all profiles.",
+    )
+    _add_llm_args(validation_score_sweep_parser)
 
     generate_counterfactual_parser = subparsers.add_parser(
         "generate-counterfactual-benchmark",
@@ -687,11 +799,22 @@ def _build_parser() -> argparse.ArgumentParser:
     build_bench2drive_manifest_parser.add_argument("--frame-stride", type=int, default=5)
     build_bench2drive_manifest_parser.add_argument("--future-steps", type=int, default=5)
     build_bench2drive_manifest_parser.add_argument("--future-frame-stride", type=int, default=5)
-    build_bench2drive_manifest_parser.add_argument("--train-fraction", type=float, default=0.9)
+    build_bench2drive_manifest_parser.add_argument("--train-fraction", type=float, default=0.8)
+    build_bench2drive_manifest_parser.add_argument("--val-fraction", type=float, default=0.1)
     build_bench2drive_manifest_parser.add_argument("--seed", type=int, default=7)
     build_bench2drive_manifest_parser.add_argument("--cache-root", default=str(DEFAULT_BENCH2DRIVE_CACHE_ROOT))
     build_bench2drive_manifest_parser.add_argument("--no-cache", action="store_true")
     build_bench2drive_manifest_parser.add_argument("--verbose", action="store_true")
+
+    split_bench2drive_manifest_parser = subparsers.add_parser(
+        "split-bench2drive-vision-manifest",
+        help="Create a scenario-stratified archive-disjoint train/val/test manifest.",
+    )
+    split_bench2drive_manifest_parser.add_argument("--manifest", default=str(DEFAULT_BENCH2DRIVE_TENSOR_MANIFEST))
+    split_bench2drive_manifest_parser.add_argument("--output", default=str(DEFAULT_BENCH2DRIVE_TENSOR_MANIFEST))
+    split_bench2drive_manifest_parser.add_argument("--train-fraction", type=float, default=0.8)
+    split_bench2drive_manifest_parser.add_argument("--val-fraction", type=float, default=0.1)
+    split_bench2drive_manifest_parser.add_argument("--seed", type=int, default=7)
 
     build_bench2drive_tensor_cache_parser = subparsers.add_parser(
         "build-bench2drive-vision-tensor-cache",
@@ -734,6 +857,10 @@ def _build_parser() -> argparse.ArgumentParser:
     train_bench2drive_parser.add_argument("--trajectory-top-k", type=int, default=2)
     train_bench2drive_parser.add_argument("--trajectory-temperature", type=float, default=1.0)
     train_bench2drive_parser.add_argument("--waypoint-loss-weight", type=float, default=1.0)
+    train_bench2drive_parser.add_argument("--selected-waypoint-loss-weight", type=float, default=0.5)
+    train_bench2drive_parser.add_argument("--displacement-loss-weight", type=float, default=0.0)
+    train_bench2drive_parser.add_argument("--endpoint-loss-weight", type=float, default=0.0)
+    train_bench2drive_parser.add_argument("--path-length-loss-weight", type=float, default=0.0)
     train_bench2drive_parser.add_argument("--control-loss-weight", type=float, default=0.25)
     train_bench2drive_parser.add_argument("--brake-loss-weight", type=float, default=0.1)
     train_bench2drive_parser.add_argument("--brake-positive-weight", type=float, default=1.0)
@@ -770,13 +897,56 @@ def _build_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_BENCH2DRIVE_OUTPUT / "vision_e2e_planner_best.pt"),
     )
     eval_bench2drive_parser.add_argument("--output", default=str(DEFAULT_BENCH2DRIVE_OUTPUT / "eval"))
-    eval_bench2drive_parser.add_argument("--split", choices=["train", "val", "all"], default="val")
+    eval_bench2drive_parser.add_argument("--split", choices=["train", "val", "test", "all"], default="test")
     eval_bench2drive_parser.add_argument("--batch-size", type=int, default=32)
     eval_bench2drive_parser.add_argument("--image-size", type=int, default=160)
     eval_bench2drive_parser.add_argument("--max-samples", type=int, default=0)
     eval_bench2drive_parser.add_argument("--num-workers", type=int, default=4)
     eval_bench2drive_parser.add_argument("--prefetch-factor", type=int, default=4)
+
+    compare_bench2drive_predictions_parser = subparsers.add_parser(
+        "compare-bench2drive-vision-predictions",
+        help="Compare two Bench2Drive vision prediction files on paired clips.",
+    )
+    compare_bench2drive_predictions_parser.add_argument("--baseline", required=True)
+    compare_bench2drive_predictions_parser.add_argument("--candidate", required=True)
+    compare_bench2drive_predictions_parser.add_argument(
+        "--output",
+        default="outputs/bench2drive_prediction_comparison",
+    )
+    compare_bench2drive_predictions_parser.add_argument("--baseline-label", default="baseline")
+    compare_bench2drive_predictions_parser.add_argument("--candidate-label", default="candidate")
+    compare_bench2drive_predictions_parser.add_argument("--seed", type=int, default=7)
+    compare_bench2drive_predictions_parser.add_argument("--bootstrap-replicates", type=int, default=5000)
+    compare_bench2drive_predictions_parser.add_argument("--allow-case-intersection", action="store_true")
     eval_bench2drive_parser.add_argument("--device", default="")
+
+    calibrate_bench2drive_parser = subparsers.add_parser(
+        "calibrate-bench2drive-trajectory-selection",
+        help="Calibrate multimodal trajectory selection on the validation split.",
+    )
+    calibrate_bench2drive_parser.add_argument(
+        "--predictions",
+        default=str(DEFAULT_BENCH2DRIVE_OUTPUT / "val" / "predictions.jsonl"),
+    )
+    calibrate_bench2drive_parser.add_argument(
+        "--evaluation-report",
+        default=str(DEFAULT_BENCH2DRIVE_OUTPUT / "val" / "evaluation_report.json"),
+    )
+    calibrate_bench2drive_parser.add_argument(
+        "--checkpoint",
+        default=str(DEFAULT_BENCH2DRIVE_OUTPUT / "vision_e2e_planner_best.pt"),
+    )
+    calibrate_bench2drive_parser.add_argument(
+        "--output-checkpoint",
+        default=str(DEFAULT_BENCH2DRIVE_OUTPUT / "vision_e2e_planner_calibrated.pt"),
+    )
+    calibrate_bench2drive_parser.add_argument(
+        "--output-report",
+        default=str(DEFAULT_BENCH2DRIVE_OUTPUT / "trajectory_selection_calibration_report.json"),
+    )
+    calibrate_bench2drive_parser.add_argument("--temperature", type=float, action="append", default=[])
+    calibrate_bench2drive_parser.add_argument("--top-k", type=int, default=2)
 
     diagnose_bench2drive_parser = subparsers.add_parser(
         "diagnose-bench2drive-vision-planner",
@@ -800,12 +970,17 @@ def _build_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_BENCH2DRIVE_OUTPUT / "vision_e2e_planner_best.pt"),
     )
     bench2drive_closed_loop_parser.add_argument("--output", default=str(DEFAULT_BENCH2DRIVE_CLOSED_LOOP_OUTPUT))
-    bench2drive_closed_loop_parser.add_argument("--split", choices=["train", "val", "all"], default="val")
+    bench2drive_closed_loop_parser.add_argument("--split", choices=["train", "val", "test", "all"], default="val")
     bench2drive_closed_loop_parser.add_argument("--max-cases", type=int, default=64)
     bench2drive_closed_loop_parser.add_argument("--max-frames-per-clip", type=int, default=20)
     bench2drive_closed_loop_parser.add_argument("--image-size", type=int, default=160)
     bench2drive_closed_loop_parser.add_argument("--device", default="")
     bench2drive_closed_loop_parser.add_argument("--video-fps", type=int, default=6)
+    bench2drive_closed_loop_parser.add_argument(
+        "--render-case-media",
+        action="store_true",
+        help="Render per-case GIF/MP4 media in addition to JSON, CSV, and static figures.",
+    )
     bench2drive_closed_loop_parser.add_argument(
         "--case-selection",
         choices=["balanced", "qualitative", "stress"],
@@ -817,6 +992,22 @@ def _build_parser() -> argparse.ArgumentParser:
     bench2drive_closed_loop_parser.add_argument("--brake-threshold", type=float, default=0.85)
     bench2drive_closed_loop_parser.add_argument("--lookahead-m", type=float, default=9.0)
     bench2drive_closed_loop_parser.add_argument("--speed-kp", type=float, default=0.45)
+
+    compare_bench2drive_closed_loop_parser = subparsers.add_parser(
+        "compare-bench2drive-closed-loop",
+        help="Compare two Bench2Drive closed-loop reports on paired case IDs.",
+    )
+    compare_bench2drive_closed_loop_parser.add_argument("--baseline", required=True)
+    compare_bench2drive_closed_loop_parser.add_argument("--candidate", required=True)
+    compare_bench2drive_closed_loop_parser.add_argument(
+        "--output",
+        default="outputs/bench2drive_closed_loop_comparison",
+    )
+    compare_bench2drive_closed_loop_parser.add_argument("--baseline-label", default="baseline")
+    compare_bench2drive_closed_loop_parser.add_argument("--candidate-label", default="candidate")
+    compare_bench2drive_closed_loop_parser.add_argument("--seed", type=int, default=7)
+    compare_bench2drive_closed_loop_parser.add_argument("--bootstrap-replicates", type=int, default=5000)
+    compare_bench2drive_closed_loop_parser.add_argument("--allow-case-intersection", action="store_true")
 
     inspect_carla_parser = subparsers.add_parser(
         "inspect-carla",
@@ -928,6 +1119,11 @@ def _build_parser() -> argparse.ArgumentParser:
     carla_semantic_demo_parser.add_argument("--video-encoder", default="hevc_nvenc")
     carla_semantic_demo_parser.add_argument("--video-nvenc-preset", default="p4")
     carla_semantic_demo_parser.add_argument("--video-quality", type=int, default=23)
+    carla_semantic_demo_parser.add_argument(
+        "--allow-non-hevc",
+        action="store_true",
+        help="Keep a rollout when the output video is not confirmed as HEVC.",
+    )
     carla_semantic_demo_parser.add_argument("--no-scenario-safety-override", action="store_true")
     carla_semantic_demo_parser.add_argument("--enable-lane-departure-guard", action="store_true")
     carla_semantic_demo_parser.add_argument("--no-condition-ego-route-traffic-lights", action="store_true")
@@ -939,7 +1135,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     carla_audit_parser.add_argument(
         "--report",
-        default="outputs/carla_semantic_demo_trajectory_transformer_final/carla_semantic_demo_report.json",
+        default="outputs/carla_semantic_demo_final/carla_semantic_demo_report.json",
     )
     carla_audit_parser.add_argument("--output", default="")
     carla_audit_parser.add_argument("--min-resolution-width", type=int, default=1920)
@@ -958,6 +1154,7 @@ def _build_parser() -> argparse.ArgumentParser:
     carla_audit_parser.add_argument("--min-nearby-actor-ratio", type=float, default=0.30)
     carla_audit_parser.add_argument("--require-semantic-match", action="store_true")
     carla_audit_parser.add_argument("--allow-non-model-control", action="store_true")
+    carla_audit_parser.add_argument("--require-hevc", action="store_true")
 
     compare_nuplan_replay_parser = subparsers.add_parser(
         "compare-nuplan-replay-evaluations",
@@ -996,11 +1193,11 @@ def _build_parser() -> argparse.ArgumentParser:
     inspect_backends_parser.add_argument("--index-root", default="artifacts/index")
     inspect_backends_parser.add_argument("--output", default="")
 
-    registry_parser = subparsers.add_parser(
-        "export-benchmark-registry",
-        help="Export the benchmark-layer registry.",
+    catalog_parser = subparsers.add_parser(
+        "export-benchmark-catalog",
+        help="Export the static benchmark-layer catalog.",
     )
-    registry_parser.add_argument("--output", default="outputs/benchmark_registry.json")
+    catalog_parser.add_argument("--output", default="outputs/benchmark_catalog.json")
 
     full_suite_parser = subparsers.add_parser(
         "run-full-benchmark-suite",
@@ -1136,6 +1333,31 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Output JSON path for the enriched case library.",
     )
 
+    human_audit_parser = subparsers.add_parser(
+        "generate-human-audit-set",
+        help="Sample a fixed human-audit subset from a case library.",
+    )
+    human_audit_parser.add_argument(
+        "--case-library",
+        default="outputs/trainval_case_library_v1/case_library_enriched.json",
+        help="Input case library JSON path.",
+    )
+    human_audit_parser.add_argument("--output", default="audits/human_audit_v1")
+    human_audit_parser.add_argument("--sample-size", type=int, default=100)
+    human_audit_parser.add_argument("--seed", type=int, default=7)
+    human_audit_parser.add_argument("--max-per-behavior", type=int, default=0)
+
+    evaluate_human_audit_parser = subparsers.add_parser(
+        "evaluate-human-audit-set",
+        help="Evaluate a completed human-audit JSONL or CSV file.",
+    )
+    evaluate_human_audit_parser.add_argument(
+        "--annotations",
+        default="audits/human_audit_v1/human_audit_items.jsonl",
+        help="Completed human-audit annotation file.",
+    )
+    evaluate_human_audit_parser.add_argument("--output", default="audits/human_audit_v1/evaluation")
+
     compare_parser = subparsers.add_parser(
         "benchmark-compare",
         help="Run the benchmark across rule, llm, and hybrid profiles and export a comparison summary.",
@@ -1189,7 +1411,9 @@ def _run_benchmark(
     llm_config: Optional[LLMConfig] = None,
     learned_reranker_checkpoint: Optional[Path] = None,
     validation_config: Optional[ValidationConfig] = None,
+    retrieval_score_config: Optional[RetrievalScoreConfig] = None,
 ) -> List[dict]:
+    retrieval_score_config = retrieval_score_config or RetrievalScoreConfig()
     queries = load_benchmark_config(config_path)
     summaries: List[dict] = []
     benchmark_results: List[dict] = []
@@ -1206,6 +1430,7 @@ def _run_benchmark(
             llm_config=llm_config,
             learned_reranker_checkpoint=learned_reranker_checkpoint,
             validation_config=validation_config,
+            retrieval_score_config=retrieval_score_config,
         )
         result["id"] = spec.id
         benchmark_results.append(result)
@@ -1231,6 +1456,431 @@ def _run_benchmark(
     write_benchmark_metrics(build_benchmark_metrics(benchmark_results, case_library_entries), output_dir)
     write_benchmark_exports(benchmark_results, case_library_entries, output_dir)
     return summaries
+
+
+def _rate_string(count: int, total: int) -> str:
+    if total <= 0:
+        return "n/a"
+    return "{0}/{1} ({2:.1%})".format(count, total, count / total)
+
+
+def _retrieval_score_sweep_row(profile_name: str, profile_output: Path) -> Dict[str, object]:
+    metrics_path = profile_output / "benchmark_metrics.json"
+    if not metrics_path.exists():
+        raise FileNotFoundError("Missing benchmark metrics for profile {0}: {1}".format(profile_name, metrics_path))
+    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    overview = dict(metrics.get("overview") or {})
+    reference = dict(metrics.get("reference_metrics") or {})
+    query_count = int(overview.get("query_count") or 0)
+    pass_at_1_count = int(
+        overview.get("validation_acceptance_at_1_count", overview.get("pass_at_1_count")) or 0
+    )
+    pass_at_k_count = int(
+        overview.get("validation_acceptance_at_k_count", overview.get("pass_at_k_count")) or 0
+    )
+    pass_at_1_rate = float(
+        overview.get("validation_acceptance_at_1_rate", overview.get("pass_at_1_rate")) or 0.0
+    )
+    pass_at_k_rate = float(
+        overview.get("validation_acceptance_at_k_rate", overview.get("pass_at_k_rate")) or 0.0
+    )
+    reference_query_count = int(reference.get("query_count") or 0)
+    reference_objective_at_1_count = int(reference.get("objective_at_1_count") or 0)
+    reference_objective_at_k_count = int(reference.get("objective_at_k_count") or 0)
+    mean_quality = float(
+        overview.get("mean_best_validation_quality_score", overview.get("mean_best_validation_score")) or 0.0
+    )
+    return {
+        "profile": profile_name,
+        "output_dir": str(profile_output),
+        "query_count": query_count,
+        "validation_acceptance_at_1_count": pass_at_1_count,
+        "validation_acceptance_at_1_rate": pass_at_1_rate,
+        "validation_acceptance_at_k_count": pass_at_k_count,
+        "validation_acceptance_at_k_rate": pass_at_k_rate,
+        "validation_acceptance_at_1": _rate_string(pass_at_1_count, query_count),
+        "validation_acceptance_at_k": _rate_string(pass_at_k_count, query_count),
+        # Compatibility aliases for sweep artifacts produced before the
+        # acceptance/quality distinction was explicit.
+        "anchor_pass_at_1_count": pass_at_1_count,
+        "anchor_pass_at_1_rate": pass_at_1_rate,
+        "anchor_pass_at_k_count": pass_at_k_count,
+        "anchor_pass_at_k_rate": pass_at_k_rate,
+        "mean_best_validation_quality_score": mean_quality,
+        "mean_best_validation_score": mean_quality,
+        "unique_case_count": int(overview.get("unique_case_count") or 0),
+        "unique_passed_case_count": int(overview.get("unique_passed_case_count") or 0),
+        "reference_query_count": reference_query_count,
+        "reference_objective_at_1_count": reference_objective_at_1_count,
+        "reference_objective_at_1_rate": float(reference.get("objective_at_1_rate") or 0.0),
+        "reference_objective_at_k_count": reference_objective_at_k_count,
+        "reference_objective_at_k_rate": float(reference.get("objective_at_k_rate") or 0.0),
+        "anchor_pass_at_1": _rate_string(pass_at_1_count, query_count),
+        "anchor_pass_at_k": _rate_string(pass_at_k_count, query_count),
+        "reference_objective_at_1": _rate_string(reference_objective_at_1_count, reference_query_count),
+        "reference_objective_at_k": _rate_string(reference_objective_at_k_count, reference_query_count),
+    }
+
+
+def _with_baseline_deltas(rows: Sequence[Dict[str, object]]) -> List[Dict[str, object]]:
+    if not rows:
+        return []
+    baseline = dict(rows[0])
+    baseline.setdefault("validation_acceptance_at_1_rate", float(baseline.get("anchor_pass_at_1_rate") or 0.0))
+    baseline.setdefault("validation_acceptance_at_k_rate", float(baseline.get("anchor_pass_at_k_rate") or 0.0))
+    baseline.setdefault("mean_best_validation_quality_score", float(baseline.get("mean_best_validation_score") or 0.0))
+    baseline_metrics = {
+        key: float(baseline.get(key) or 0.0)
+        for key in [
+            "validation_acceptance_at_1_rate",
+            "validation_acceptance_at_k_rate",
+            "mean_best_validation_quality_score",
+            "reference_objective_at_1_rate",
+            "reference_objective_at_k_rate",
+        ]
+    }
+    enriched: List[Dict[str, object]] = []
+    for row in rows:
+        item = dict(row)
+        item.setdefault("validation_acceptance_at_1_rate", float(item.get("anchor_pass_at_1_rate") or 0.0))
+        item.setdefault("validation_acceptance_at_k_rate", float(item.get("anchor_pass_at_k_rate") or 0.0))
+        item.setdefault("mean_best_validation_quality_score", float(item.get("mean_best_validation_score") or 0.0))
+        for key, baseline_value in baseline_metrics.items():
+            item["delta_{0}".format(key)] = round(float(item.get(key) or 0.0) - baseline_value, 6)
+        item["mean_best_validation_score"] = item["mean_best_validation_quality_score"]
+        item["delta_mean_best_validation_score"] = item["delta_mean_best_validation_quality_score"]
+        item["delta_anchor_pass_at_1_rate"] = item["delta_validation_acceptance_at_1_rate"]
+        item["delta_anchor_pass_at_k_rate"] = item["delta_validation_acceptance_at_k_rate"]
+        enriched.append(item)
+    return enriched
+
+
+def _write_retrieval_score_sweep_outputs(payload: Dict[str, object], output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / "retrieval_score_profile_sweep.json"
+    csv_path = output_dir / "retrieval_score_profile_sweep.csv"
+    md_path = output_dir / "retrieval_score_profile_sweep.md"
+    json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    rows = list(payload.get("profiles") or [])
+    fieldnames = [
+        "profile",
+        "query_count",
+        "validation_acceptance_at_1",
+        "validation_acceptance_at_k",
+        "mean_best_validation_quality_score",
+        "reference_objective_at_1",
+        "reference_objective_at_k",
+        "unique_case_count",
+        "unique_passed_case_count",
+        "delta_validation_acceptance_at_1_rate",
+        "delta_validation_acceptance_at_k_rate",
+        "delta_mean_best_validation_quality_score",
+        "delta_reference_objective_at_1_rate",
+        "delta_reference_objective_at_k_rate",
+        "output_dir",
+    ]
+    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: row.get(field, "") for field in fieldnames})
+
+    lines = [
+        "# Retrieval Score Profile Sweep",
+        "",
+        "This sweep reruns the same benchmark queries with different retrieval scoring profiles. "
+        "The outputs measure deterministic anchor consistency, not independent human-label recall.",
+        "",
+        "| Profile | Validation Acceptance@1 | Validation Acceptance@K | Mean Best Validation Quality | Reference Objective@1 | Unique Cases |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in rows:
+        lines.append(
+            "| {profile} | {validation_acceptance_at_1} | {validation_acceptance_at_k} | {mean_best_validation_quality_score:.2f} | "
+            "{reference_objective_at_1} | {unique_case_count} |".format(**row)
+        )
+    lines.extend(
+        [
+            "",
+            "## Outputs",
+            "",
+            "- JSON: `retrieval_score_profile_sweep.json`",
+            "- CSV: `retrieval_score_profile_sweep.csv`",
+            "- Per-profile benchmark artifacts: `profiles/<profile>/`",
+            "",
+        ]
+    )
+    md_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _run_retrieval_score_sweep(
+    config_path: Path,
+    db_path: Path,
+    output_dir: Path,
+    candidate_pool: int,
+    profiles: Sequence[str],
+    query_mode: str = "rule",
+    rerank_mode: str = "none",
+    llm_config: Optional[LLMConfig] = None,
+    learned_reranker_checkpoint: Optional[Path] = None,
+) -> Dict[str, object]:
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    selected_profiles = list(profiles) or ["default", "equal"]
+    raw_rows: List[Dict[str, object]] = []
+    for profile_name in selected_profiles:
+        profile_output = output_dir / "profiles" / profile_name
+        _run_benchmark(
+            config_path=config_path,
+            db_path=db_path,
+            output_dir=profile_output,
+            candidate_pool=candidate_pool,
+            query_mode=query_mode,
+            rerank_mode=rerank_mode,
+            llm_config=llm_config,
+            learned_reranker_checkpoint=learned_reranker_checkpoint,
+            retrieval_score_config=RetrievalScoreConfig(profile_name=profile_name),
+        )
+        raw_rows.append(_retrieval_score_sweep_row(profile_name, profile_output))
+
+    payload = {
+        "schema": "retrieval_score_profile_sweep_v1",
+        "config": str(config_path),
+        "db": str(db_path),
+        "candidate_pool": int(candidate_pool),
+        "query_mode": query_mode,
+        "rerank_mode": rerank_mode,
+        "profiles": _with_baseline_deltas(raw_rows),
+        "limitations": [
+            "Reference anchors are deterministic weakly supervised targets, not independent human annotations.",
+            "The sweep isolates retrieval score weights; validation thresholds and benchmark anchors are unchanged.",
+        ],
+    }
+    _write_retrieval_score_sweep_outputs(payload, output_dir)
+    return payload
+
+
+def _write_validation_score_sweep_outputs(payload: Dict[str, object], output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "validation_score_profile_sweep.json").write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    rows = list(payload.get("profiles") or [])
+    fieldnames = [
+        "profile",
+        "query_count",
+        "validation_acceptance_at_1",
+        "validation_acceptance_at_k",
+        "mean_best_validation_quality_score",
+        "reference_objective_at_1",
+        "reference_objective_at_k",
+        "unique_case_count",
+        "unique_passed_case_count",
+        "delta_mean_best_validation_quality_score",
+        "output_dir",
+    ]
+    with (output_dir / "validation_score_profile_sweep.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: row.get(field, "") for field in fieldnames})
+    lines = [
+        "# Validation Score Profile Sweep",
+        "",
+        "This sweep changes only the weights of the continuous validation-quality score. "
+        "The binary acceptance gate, query definitions, and retrieval order remain fixed.",
+        "The reported values are deterministic anchor-consistency diagnostics, not independent human-label recall.",
+        "",
+        "| Profile | Validation Acceptance@1 | Validation Acceptance@K | Mean Best Validation Quality | Reference Objective@1 | Unique Cases |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in rows:
+        lines.append(
+            "| {profile} | {validation_acceptance_at_1} | {validation_acceptance_at_k} | {mean_best_validation_quality_score:.2f} | "
+            "{reference_objective_at_1} | {unique_case_count} |".format(**row)
+        )
+    lines.extend(
+        [
+            "",
+            "- JSON: `validation_score_profile_sweep.json`",
+            "- CSV: `validation_score_profile_sweep.csv`",
+            "- Per-profile benchmark artifacts: `profiles/<profile>/`",
+            "",
+        ]
+    )
+    (output_dir / "validation_score_profile_sweep.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def _run_validation_score_sweep(
+    config_path: Path,
+    db_path: Path,
+    output_dir: Path,
+    candidate_pool: int,
+    profiles: Sequence[str],
+    query_mode: str = "rule",
+    rerank_mode: str = "none",
+    llm_config: Optional[LLMConfig] = None,
+    learned_reranker_checkpoint: Optional[Path] = None,
+) -> Dict[str, object]:
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    selected_profiles = list(profiles) or ["default", "equal"]
+    rows: List[Dict[str, object]] = []
+    for profile_name in selected_profiles:
+        profile_output = output_dir / "profiles" / profile_name
+        _run_benchmark(
+            config_path=config_path,
+            db_path=db_path,
+            output_dir=profile_output,
+            candidate_pool=candidate_pool,
+            query_mode=query_mode,
+            rerank_mode=rerank_mode,
+            llm_config=llm_config,
+            learned_reranker_checkpoint=learned_reranker_checkpoint,
+            validation_config=ValidationConfig(
+                name="validation_score_{0}".format(profile_name),
+                score_profile=profile_name,
+            ),
+        )
+        rows.append(_retrieval_score_sweep_row(profile_name, profile_output))
+
+    rows = _with_baseline_deltas(rows)
+    for row in rows:
+        row["delta_mean_best_validation_quality_score"] = row.get("delta_mean_best_validation_quality_score", 0.0)
+    payload = {
+        "schema": "validation_score_profile_sweep_v1",
+        "config": str(config_path),
+        "db": str(db_path),
+        "candidate_pool": int(candidate_pool),
+        "query_mode": query_mode,
+        "rerank_mode": rerank_mode,
+        "profiles": rows,
+        "protocol": {
+            "varied": "continuous validation-quality score weights",
+            "fixed": ["retrieval_score_weights", "query_benchmark", "pass_gate_thresholds", "behavior_thresholds"],
+            "interpretation": "anchor consistency and quality-score sensitivity, not independent semantic recall",
+        },
+    }
+    _write_validation_score_sweep_outputs(payload, output_dir)
+    return payload
+
+
+def _threshold_scale_overrides(scale: float) -> Dict[str, float]:
+    scale = float(scale)
+    if scale <= 0.0:
+        raise ValueError("Validation threshold scale must be positive.")
+    return {
+        name: float(value) * scale
+        for name, value in HEURISTIC_THRESHOLDS.items()
+        if name.endswith(("_m", "_mps"))
+    }
+
+
+def _write_threshold_sweep_outputs(payload: Dict[str, object], output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "validation_threshold_sweep.json").write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    rows = list(payload.get("profiles") or [])
+    fieldnames = [
+        "profile",
+        "threshold_scale",
+        "query_count",
+        "validation_acceptance_at_1",
+        "validation_acceptance_at_k",
+        "mean_best_validation_quality_score",
+        "reference_objective_at_1",
+        "reference_objective_at_k",
+        "unique_case_count",
+        "unique_passed_case_count",
+        "output_dir",
+    ]
+    with (output_dir / "validation_threshold_sweep.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: row.get(field, "") for field in fieldnames})
+    lines = [
+        "# Validation Threshold Sweep",
+        "",
+        "The sweep changes only metric-valued behavior thresholds; retrieval weights, query definitions, and validation gates remain fixed.",
+        "The reported values are deterministic anchor consistency metrics, not independent human-label recall.",
+        "",
+        "| Profile | Scale | Validation Acceptance@1 | Validation Acceptance@K | Mean Best Validation Quality | Reference Objective@1 | Unique Cases |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in rows:
+        lines.append(
+            "| {profile} | {threshold_scale:.2f} | {validation_acceptance_at_1} | {validation_acceptance_at_k} | "
+            "{mean_best_validation_quality_score:.2f} | {reference_objective_at_1} | {unique_case_count} |".format(**row)
+        )
+    lines.extend(
+        [
+            "",
+            "- JSON: `validation_threshold_sweep.json`",
+            "- CSV: `validation_threshold_sweep.csv`",
+            "- Per-profile artifacts: `profiles/<profile>/`",
+            "",
+        ]
+    )
+    (output_dir / "validation_threshold_sweep.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def _run_validation_threshold_sweep(
+    config_path: Path,
+    db_path: Path,
+    output_dir: Path,
+    candidate_pool: int,
+    scales: Sequence[float],
+    query_mode: str = "rule",
+    rerank_mode: str = "none",
+    llm_config: Optional[LLMConfig] = None,
+    learned_reranker_checkpoint: Optional[Path] = None,
+) -> Dict[str, object]:
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    selected_scales = [float(value) for value in (scales or (0.85, 1.0, 1.15))]
+    rows: List[Dict[str, object]] = []
+    for scale in selected_scales:
+        scale_label = "{0:.2f}".format(scale).replace(".", "p")
+        profile_name = "geometry_scale_{0}".format(scale_label)
+        profile_output = output_dir / "profiles" / profile_name
+        _run_benchmark(
+            config_path=config_path,
+            db_path=db_path,
+            output_dir=profile_output,
+            candidate_pool=candidate_pool,
+            query_mode=query_mode,
+            rerank_mode=rerank_mode,
+            llm_config=llm_config,
+            learned_reranker_checkpoint=learned_reranker_checkpoint,
+            validation_config=ValidationConfig(
+                name=profile_name,
+                threshold_overrides=_threshold_scale_overrides(scale),
+            ),
+        )
+        row = _retrieval_score_sweep_row(profile_name, profile_output)
+        row["threshold_scale"] = scale
+        rows.append(row)
+
+    payload = {
+        "schema": "validation_threshold_sweep_v1",
+        "config": str(config_path),
+        "db": str(db_path),
+        "candidate_pool": int(candidate_pool),
+        "query_mode": query_mode,
+        "rerank_mode": rerank_mode,
+        "profiles": rows,
+        "protocol": {
+            "thresholds": "metric-valued heuristic thresholds scaled together",
+            "fixed": ["retrieval_score_weights", "query_benchmark", "pass_gate_thresholds"],
+            "interpretation": "anchor consistency, not independent semantic recall",
+        },
+    }
+    _write_threshold_sweep_outputs(payload, output_dir)
+    return payload
 
 
 def main() -> None:
@@ -1266,6 +1916,12 @@ def main() -> None:
         print(json.dumps(stats, indent=2))
         return
 
+    if args.command == "migrate-index":
+        metadata = migrate_index_schema(Path(args.db))
+        print("Migrated index:", Path(args.db).resolve())
+        print(json.dumps(metadata, indent=2))
+        return
+
     if args.command == "query":
         llm_config = _resolve_llm_config(args)
         result = run_query_pipeline(
@@ -1278,6 +1934,7 @@ def main() -> None:
             rerank_mode=args.rerank_mode,
             llm_config=llm_config,
             learned_reranker_checkpoint=_optional_path(args.learned_reranker_checkpoint),
+            retrieval_score_config=RetrievalScoreConfig(profile_name=args.retrieval_score_profile),
         )
         print("Query output:", result["query_dir"])
         print("Candidates:", result["candidate_count"], "Selected:", result["selected_count"])
@@ -1324,7 +1981,10 @@ def main() -> None:
             "Validation groups:",
             report["validation_group_count"],
         )
-        print("Validation Recall@1:", dict(report.get("validation_metrics") or {}).get("recall_at_1"))
+        print(
+            "Validation weak-anchor consistency@1:",
+            dict(report.get("validation_metrics") or {}).get("recall_at_1"),
+        )
         return
 
     if args.command == "train-large-learned-retriever":
@@ -1347,7 +2007,10 @@ def main() -> None:
         )
         print("Large learned retriever checkpoint:", Path(report["checkpoint_path"]).resolve())
         print("Training groups:", report["train_group_count"], "Validation groups:", report["validation_group_count"])
-        print("Validation Recall@1:", dict(report.get("validation_metrics") or {}).get("recall_at_1"))
+        print(
+            "Validation weak-anchor consistency@1:",
+            dict(report.get("validation_metrics") or {}).get("recall_at_1"),
+        )
         return
 
     if args.command == "run-learned-retrieval":
@@ -1389,6 +2052,7 @@ def main() -> None:
             rerank_mode=args.rerank_mode,
             llm_config=llm_config,
             learned_reranker_checkpoint=_optional_path(args.learned_reranker_checkpoint),
+            retrieval_score_config=RetrievalScoreConfig(profile_name=args.retrieval_score_profile),
         )
         print("LangGraph query output:", result["query_dir"])
         print("Candidates:", result["candidate_count"], "Selected:", result["selected_count"])
@@ -1409,6 +2073,21 @@ def main() -> None:
         )
         print("Research agent report:", result["report_path"])
         print("Output:", result["output_dir"])
+        return
+
+    if args.command == "inspect-ollama-model":
+        llm_config = _resolve_llm_config(
+            args,
+            require=True,
+            default_base_url=DEFAULT_OLLAMA_BASE_URL,
+            default_model=DEFAULT_OLLAMA_MODEL,
+        )
+        metadata = inspect_ollama_model(llm_config)
+        output_path = Path(args.output).resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
+        print("Ollama model metadata:", output_path)
+        print(json.dumps({"model": metadata["model"], "digest": metadata.get("digest", "")}, indent=2))
         return
 
     if args.command == "run-failure-mining":
@@ -1436,9 +2115,61 @@ def main() -> None:
             rerank_mode=args.rerank_mode,
             llm_config=llm_config,
             learned_reranker_checkpoint=_optional_path(args.learned_reranker_checkpoint),
+            retrieval_score_config=RetrievalScoreConfig(profile_name=args.retrieval_score_profile),
         )
         print("Benchmark output:", output_dir)
         print("Queries:", len(summaries))
+        return
+
+    if args.command == "benchmark-score-sweep":
+        llm_config = _resolve_llm_config(args)
+        payload = _run_retrieval_score_sweep(
+            config_path=Path(args.config),
+            db_path=Path(args.db),
+            output_dir=Path(args.output),
+            candidate_pool=args.candidate_pool,
+            profiles=args.profile,
+            query_mode=args.query_mode,
+            rerank_mode=args.rerank_mode,
+            llm_config=llm_config,
+            learned_reranker_checkpoint=_optional_path(args.learned_reranker_checkpoint),
+        )
+        print("Retrieval score sweep:", Path(args.output).resolve())
+        print(json.dumps({"profiles": [row["profile"] for row in payload["profiles"]]}, indent=2))
+        return
+
+    if args.command == "benchmark-threshold-sweep":
+        llm_config = _resolve_llm_config(args)
+        payload = _run_validation_threshold_sweep(
+            config_path=Path(args.config),
+            db_path=Path(args.db),
+            output_dir=Path(args.output),
+            candidate_pool=args.candidate_pool,
+            scales=args.scale,
+            query_mode=args.query_mode,
+            rerank_mode=args.rerank_mode,
+            llm_config=llm_config,
+            learned_reranker_checkpoint=_optional_path(args.learned_reranker_checkpoint),
+        )
+        print("Validation threshold sweep:", Path(args.output).resolve())
+        print(json.dumps({"profiles": [row["profile"] for row in payload["profiles"]]}, indent=2))
+        return
+
+    if args.command == "benchmark-validation-score-sweep":
+        llm_config = _resolve_llm_config(args)
+        payload = _run_validation_score_sweep(
+            config_path=Path(args.config),
+            db_path=Path(args.db),
+            output_dir=Path(args.output),
+            candidate_pool=args.candidate_pool,
+            profiles=args.profile,
+            query_mode=args.query_mode,
+            rerank_mode=args.rerank_mode,
+            llm_config=llm_config,
+            learned_reranker_checkpoint=_optional_path(args.learned_reranker_checkpoint),
+        )
+        print("Validation score sweep:", Path(args.output).resolve())
+        print(json.dumps({"profiles": [row["profile"] for row in payload["profiles"]]}, indent=2))
         return
 
     if args.command == "generate-counterfactual-benchmark":
@@ -1813,11 +2544,24 @@ def main() -> None:
             future_steps=args.future_steps,
             future_frame_stride=args.future_frame_stride,
             train_fraction=args.train_fraction,
+            val_fraction=args.val_fraction,
             seed=args.seed,
             cache_root=None if args.no_cache else Path(args.cache_root),
             verbose=bool(args.verbose),
         )
         print("Bench2Drive vision manifest:", Path(args.output).resolve())
+        print(json.dumps({k: metadata[k] for k in ["archive_count", "row_count", "split_counts"]}, indent=2))
+        return
+
+    if args.command == "split-bench2drive-vision-manifest":
+        metadata = resplit_bench2drive_vision_manifest(
+            manifest_path=Path(args.manifest),
+            output_path=Path(args.output),
+            train_fraction=args.train_fraction,
+            val_fraction=args.val_fraction,
+            seed=args.seed,
+        )
+        print("Bench2Drive split manifest:", Path(args.output).resolve())
         print(json.dumps({k: metadata[k] for k in ["archive_count", "row_count", "split_counts"]}, indent=2))
         return
 
@@ -1854,6 +2598,10 @@ def main() -> None:
             trajectory_top_k=args.trajectory_top_k,
             trajectory_temperature=args.trajectory_temperature,
             waypoint_loss_weight=args.waypoint_loss_weight,
+            selected_waypoint_loss_weight=args.selected_waypoint_loss_weight,
+            displacement_loss_weight=args.displacement_loss_weight,
+            endpoint_loss_weight=args.endpoint_loss_weight,
+            path_length_loss_weight=args.path_length_loss_weight,
             control_loss_weight=args.control_loss_weight,
             brake_loss_weight=args.brake_loss_weight,
             brake_positive_weight=args.brake_positive_weight,
@@ -1903,6 +2651,35 @@ def main() -> None:
         print(json.dumps(report["metrics"], indent=2))
         return
 
+    if args.command == "compare-bench2drive-vision-predictions":
+        report = compare_vision_e2e_prediction_sets(
+            baseline_predictions_path=Path(args.baseline),
+            candidate_predictions_path=Path(args.candidate),
+            output_dir=Path(args.output),
+            baseline_label=args.baseline_label,
+            candidate_label=args.candidate_label,
+            seed=args.seed,
+            bootstrap_replicates=args.bootstrap_replicates,
+            allow_case_intersection=args.allow_case_intersection,
+        )
+        print("Bench2Drive paired prediction comparison:", Path(args.output).resolve())
+        print(json.dumps(report["metrics"], indent=2))
+        return
+
+    if args.command == "calibrate-bench2drive-trajectory-selection":
+        report = calibrate_trajectory_selection(
+            predictions_path=Path(args.predictions),
+            evaluation_report_path=Path(args.evaluation_report),
+            checkpoint_path=Path(args.checkpoint),
+            output_checkpoint_path=Path(args.output_checkpoint),
+            output_report_path=Path(args.output_report),
+            temperatures=args.temperature or (0.25, 0.5, 0.75, 1.0, 1.5, 2.0),
+            top_k=args.top_k,
+        )
+        print("Bench2Drive calibrated checkpoint:", Path(args.output_checkpoint).resolve())
+        print(json.dumps(report["selected"], indent=2))
+        return
+
     if args.command == "diagnose-bench2drive-vision-planner":
         report = diagnose_vision_e2e_predictions(
             predictions_path=Path(args.predictions),
@@ -1925,6 +2702,7 @@ def main() -> None:
             image_size=args.image_size,
             device=args.device,
             video_fps=args.video_fps,
+            render_case_media=args.render_case_media,
             case_selection=args.case_selection,
             control_config=ClosedLoopControlConfig(
                 dt_s=args.dt_s,
@@ -1937,6 +2715,21 @@ def main() -> None:
         )
         print("Bench2Drive vision closed-loop evaluation:", Path(args.output).resolve())
         print(json.dumps(report["comparison"], indent=2))
+        return
+
+    if args.command == "compare-bench2drive-closed-loop":
+        report = compare_bench2drive_closed_loop_reports(
+            baseline_report_path=Path(args.baseline),
+            candidate_report_path=Path(args.candidate),
+            output_dir=Path(args.output),
+            baseline_label=args.baseline_label,
+            candidate_label=args.candidate_label,
+            seed=args.seed,
+            bootstrap_replicates=args.bootstrap_replicates,
+            allow_case_intersection=args.allow_case_intersection,
+        )
+        print("Bench2Drive paired closed-loop comparison:", Path(args.output).resolve())
+        print(json.dumps(report["metrics"], indent=2))
         return
 
     if args.command == "inspect-carla":
@@ -2046,6 +2839,7 @@ def main() -> None:
             enable_lane_departure_guard=bool(args.enable_lane_departure_guard),
             condition_ego_route_traffic_lights=not bool(args.no_condition_ego_route_traffic_lights),
             max_attempts_per_target=args.max_attempts_per_target,
+            require_hevc=not bool(args.allow_non_hevc),
         )
         print("CARLA semantic demo mining:", Path(args.output).resolve())
         print(
@@ -2082,6 +2876,7 @@ def main() -> None:
             min_nearby_actor_ratio=args.min_nearby_actor_ratio,
             require_semantic_match=bool(args.require_semantic_match),
             require_model_control=not bool(args.allow_non_model_control),
+            require_hevc=bool(args.require_hevc),
         )
         default_audit_name = (
             "carla_semantic_demo_audit.json"
@@ -2124,10 +2919,10 @@ def main() -> None:
         print(json.dumps(inventory, indent=2, ensure_ascii=False))
         return
 
-    if args.command == "export-benchmark-registry":
-        registry = write_benchmark_registry(Path(args.output), build_default_benchmark_registry())
-        print("Benchmark registry:", Path(args.output).resolve())
-        print(json.dumps({"schema": registry["schema"], "layer_count": len(registry["layers"])}, indent=2))
+    if args.command == "export-benchmark-catalog":
+        catalog = write_benchmark_catalog(Path(args.output), build_default_benchmark_catalog())
+        print("Benchmark catalog:", Path(args.output).resolve())
+        print(json.dumps({"schema": catalog["schema"], "layer_count": len(catalog["layers"])}, indent=2))
         return
 
     if args.command == "export-unified-cases":
@@ -2230,6 +3025,27 @@ def main() -> None:
         )
         print("Enriched case library:", Path(args.output).resolve())
         print(json.dumps(metadata, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "generate-human-audit-set":
+        manifest = generate_human_audit_set(
+            case_library_path=Path(args.case_library),
+            output_dir=Path(args.output),
+            sample_size=args.sample_size,
+            seed=args.seed,
+            max_per_behavior=args.max_per_behavior,
+        )
+        print("Human audit set:", Path(args.output).resolve())
+        print(json.dumps({"audit_item_count": manifest["audit_item_count"], "jsonl": manifest["jsonl"]}, indent=2))
+        return
+
+    if args.command == "evaluate-human-audit-set":
+        metrics = evaluate_human_audit_set(
+            annotation_path=Path(args.annotations),
+            output_dir=Path(args.output),
+        )
+        print("Human audit evaluation:", Path(args.output).resolve())
+        print(json.dumps(metrics["overview"], indent=2, ensure_ascii=False))
         return
 
     if args.command == "benchmark-compare":

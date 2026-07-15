@@ -18,6 +18,7 @@ from nusc_scene_agent.pipeline import (
     _select_diverse_cases,
 )
 from nusc_scene_agent.reporting import slugify, write_query_report
+from nusc_scene_agent.retrieval import RetrievalScoreConfig
 from nusc_scene_agent.validation import validate_candidate
 
 
@@ -36,6 +37,9 @@ class LangGraphState(TypedDict, total=False):
     evaluated_hypotheses: List[Dict[str, object]]
     selected_query: ParsedQuery
     selected_candidates: List[RetrievalCandidate]
+    retrieval_candidates: List[RetrievalCandidate]
+    ranked_candidates: List[RetrievalCandidate]
+    validated_cases: List[ValidatedCase]
     selected_cases: List[ValidatedCase]
     query_dir: Path
     summary_rows: List[Dict[str, object]]
@@ -98,10 +102,14 @@ def _evaluate_hypotheses_node(state: LangGraphState) -> LangGraphState:
     return {"evaluated_hypotheses": evaluated_hypotheses}
 
 
-def _best_validation_score(cases: List[ValidatedCase]) -> float:
+def _best_validation_quality_score(cases: List[ValidatedCase]) -> float:
     if not cases:
         return 0.0
-    return max(float(case.validation_score) for case in cases)
+    best = max(
+        cases,
+        key=lambda case: (bool(case.passed), float(case.validation_quality_score)),
+    )
+    return float(best.validation_quality_score)
 
 
 def _build_framework_trace(
@@ -129,8 +137,12 @@ def _build_framework_trace(
                     str(item["name"]): sum(1 for case in item["validated"] if case.passed)
                     for item in evaluated_hypotheses
                 },
+                "best_validation_quality_scores": {
+                    str(item["name"]): _best_validation_quality_score(list(item["validated"]))
+                    for item in evaluated_hypotheses
+                },
                 "best_validation_scores": {
-                    str(item["name"]): _best_validation_score(list(item["validated"]))
+                    str(item["name"]): _best_validation_quality_score(list(item["validated"]))
                     for item in evaluated_hypotheses
                 },
             },
@@ -163,12 +175,21 @@ def _select_hypothesis_node(state: LangGraphState) -> LangGraphState:
         case.candidate
         for case in _select_diverse_cases(list(best_hypothesis["validated"]), top_k=int(state.get("top_k") or 5))
     ]
-    agent_trace = _build_agent_trace(query_mode, evaluated_hypotheses, selected_query)
+    agent_trace = _build_agent_trace(
+        query_mode,
+        evaluated_hypotheses,
+        selected_query,
+        RetrievalScoreConfig(),
+        llm_config,
+    )
     framework_trace = _build_framework_trace(query_mode, evaluated_hypotheses, selected_query)
 
     return {
         "selected_query": selected_query,
         "selected_candidates": selected_candidates,
+        "retrieval_candidates": list(best_hypothesis.get("retrieval_candidates") or []),
+        "ranked_candidates": list(best_hypothesis.get("ranked_candidates") or []),
+        "validated_cases": list(best_hypothesis.get("validated") or []),
         "candidate_count": len(best_hypothesis["candidates"]),
         "agent_trace": agent_trace,
         "framework_trace": framework_trace,
@@ -267,6 +288,9 @@ def run_langgraph_query_pipeline(
         "selected_count": int(final_state["selected_count"]),
         "summary_rows": list(final_state.get("summary_rows") or []),
         "selected_cases": list(final_state.get("selected_cases") or []),
+        "retrieval_candidates": list(final_state.get("retrieval_candidates") or []),
+        "ranked_candidates": list(final_state.get("ranked_candidates") or []),
+        "validated_cases": list(final_state.get("validated_cases") or []),
         "hypothesis_results": list(final_state.get("evaluated_hypotheses") or []),
         "agent_trace": dict(final_state.get("agent_trace") or {}),
         "framework_trace": dict(final_state.get("framework_trace") or {}),

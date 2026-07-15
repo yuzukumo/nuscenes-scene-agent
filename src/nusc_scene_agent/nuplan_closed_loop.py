@@ -27,6 +27,8 @@ DEFAULT_NUPLAN_CLOSED_LOOP_PROFILES = ["logged_ego_oracle", "history_kinematic",
 
 NUPLAN_CLOSED_LOOP_SCHEMA = "nuplan_closed_loop_study_v1"
 NUPLAN_CLOSED_LOOP_METRICS_SCHEMA = "nuplan_closed_loop_metrics_v1"
+NUPLAN_CLOSED_LOOP_PROTOCOL = "ego-only replay simulation with non-reactive logged actors"
+NUPLAN_CLOSED_LOOP_METRIC_PROTOCOL_VERSION = "2.0"
 COLLISION_DISTANCE_M = 2.0
 TARGET_FOLLOWING_DISTANCE_M = 8.0
 TIME_GAP_S = 1.2
@@ -93,6 +95,16 @@ def run_nuplan_closed_loop_study(
     )
     manifest = {
         "schema": NUPLAN_CLOSED_LOOP_SCHEMA,
+        "evaluation_protocol": NUPLAN_CLOSED_LOOP_PROTOCOL,
+        "metric_protocol_version": NUPLAN_CLOSED_LOOP_METRIC_PROTOCOL_VERSION,
+        "progress_ratio_semantics": {
+            "progress_ratio": "bounded completion ratio in [0, 1]",
+            "raw_progress_ratio": "simulated path length divided by logged path length, capped at 1.5",
+            "closed_loop_score": "uses raw_progress_ratio to penalize both under- and over-progress",
+        },
+        "actor_dynamics": "replayed_logged_states",
+        "traffic_light_dynamics": "replayed_logged_context",
+        "planner_feedback_to_other_agents": False,
         "output_dir": str(output_dir),
         "benchmark": {
             "path": str(benchmark_path),
@@ -132,6 +144,15 @@ def evaluate_closed_loop_profile(benchmark: Mapping[str, Any], profile_name: str
     overview = _build_overview(profile_name, case_metrics)
     return {
         "schema": NUPLAN_CLOSED_LOOP_METRICS_SCHEMA,
+        "evaluation_protocol": NUPLAN_CLOSED_LOOP_PROTOCOL,
+        "metric_protocol_version": NUPLAN_CLOSED_LOOP_METRIC_PROTOCOL_VERSION,
+        "progress_ratio_semantics": {
+            "progress_ratio": "bounded completion ratio in [0, 1]",
+            "raw_progress_ratio": "simulated path length divided by logged path length, capped at 1.5",
+            "closed_loop_score": "uses raw_progress_ratio to penalize both under- and over-progress",
+        },
+        "actor_dynamics": "replayed_logged_states",
+        "planner_feedback_to_other_agents": False,
         "overview": overview,
         "case_metrics": case_metrics,
         "rollouts": rollouts,
@@ -352,12 +373,17 @@ def _evaluate_closed_loop_case(case: Dict[str, Any], rollout: Mapping[str, Any])
     horizon_recall = len(aligned) / max(len(future_frames), 1)
     progress = _closed_loop_progress(states)
     logged_progress = _logged_progress(future_frames)
-    progress_ratio = min(1.5, progress / max(logged_progress, 1e-6)) if logged_progress > 0 else 1.0
+    raw_progress_ratio = (
+        min(1.5, progress / max(logged_progress, 1e-6))
+        if logged_progress > 0
+        else 1.0
+    )
+    progress_ratio = min(1.0, raw_progress_ratio)
     distance_score = 0.0 if min_distance_error is None else max(0.0, 1.0 - min_distance_error / 10.0)
     ttc_score = _ttc_similarity(predicted_min_ttc, logged_min_ttc)
     collision_score = 1.0 if collision == logged_collision else 0.0
     comfort_score = 0.0 if bool(comfort.get("comfort_violation")) else 1.0
-    progress_score = max(0.0, 1.0 - abs(1.0 - progress_ratio))
+    progress_score = max(0.0, 1.0 - abs(1.0 - raw_progress_ratio))
     closed_loop_score = (
         0.25 * distance_score
         + 0.20 * collision_score
@@ -380,6 +406,7 @@ def _evaluate_closed_loop_case(case: Dict[str, Any], rollout: Mapping[str, Any])
         "closed_loop_progress_m": progress,
         "logged_progress_m": logged_progress,
         "progress_ratio": progress_ratio,
+        "raw_progress_ratio": raw_progress_ratio,
         "logged_min_distance_m": logged_min_distance,
         "predicted_min_distance_m": predicted_min_distance,
         "min_distance_error_m": min_distance_error,
@@ -412,6 +439,7 @@ def _missing_case_metric(case: Mapping[str, Any]) -> Dict[str, Any]:
         "closed_loop_progress_m": 0.0,
         "logged_progress_m": _logged_progress(list(case.get("future_frames", []))),
         "progress_ratio": 0.0,
+        "raw_progress_ratio": 0.0,
         "logged_min_distance_m": case.get("risk_targets", {}).get("min_distance_m"),
         "predicted_min_distance_m": None,
         "min_distance_error_m": None,
@@ -436,6 +464,7 @@ def _build_overview(profile_name: str, rows: Sequence[Mapping[str, Any]]) -> Dic
     distance_errors = _finite_values(rows, "min_distance_error_m")
     ttc_errors = _finite_values(rows, "min_ttc_error_s")
     progress_ratios = _finite_values(rows, "progress_ratio")
+    raw_progress_ratios = _finite_values(rows, "raw_progress_ratio")
     return {
         "profile_name": profile_name,
         "case_count": len(rows),
@@ -446,6 +475,7 @@ def _build_overview(profile_name: str, rows: Sequence[Mapping[str, Any]]) -> Dic
         "mean_min_distance_error_m": mean(distance_errors) if distance_errors else None,
         "mean_min_ttc_error_s": mean(ttc_errors) if ttc_errors else None,
         "mean_progress_ratio": mean(progress_ratios) if progress_ratios else None,
+        "mean_raw_progress_ratio": mean(raw_progress_ratios) if raw_progress_ratios else None,
         "mean_closed_loop_score": mean(scores) if scores else 0.0,
         "collision_proxy_mismatch_count": sum(
             1 for row in rows if "collision_proxy_mismatch" in set(row.get("failure_tags", []))
@@ -595,6 +625,7 @@ def _write_case_metrics_csv(rows: Sequence[Mapping[str, Any]], output_path: Path
         "closed_loop_progress_m",
         "logged_progress_m",
         "progress_ratio",
+        "raw_progress_ratio",
         "min_distance_error_m",
         "min_ttc_error_s",
         "predicted_collision_proxy",
@@ -621,6 +652,7 @@ def _write_comparison_csv(payload: Mapping[str, Any], output_path: Path) -> None
         "mean_min_distance_error_m",
         "mean_min_ttc_error_s",
         "mean_progress_ratio",
+        "mean_raw_progress_ratio",
         "mean_closed_loop_score",
         "collision_proxy_mismatch_count",
         "comfort_violation_count",
@@ -640,8 +672,8 @@ def _write_study_summary(manifest: Mapping[str, Any], output_dir: Path) -> None:
         f"- Benchmark cases: `{manifest.get('benchmark', {}).get('metadata', {}).get('case_count', 0)}`",
         f"- Profiles: `{len(manifest.get('evaluations', []))}`",
         "",
-        "| Profile | Cases | Ego ADE | Distance Error | Progress Ratio | Closed-Loop Score |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| Profile | Cases | Ego ADE | Distance Error | Progress Ratio | Raw Progress Ratio | Closed-Loop Score |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for item in manifest.get("evaluations", []):
         overview = dict(item.get("overview") or {})
@@ -650,6 +682,7 @@ def _write_study_summary(manifest: Mapping[str, Any], output_dir: Path) -> None:
             f"`{_format_optional_float(overview.get('mean_ego_ade_m'))}` | "
             f"`{_format_optional_float(overview.get('mean_min_distance_error_m'))}` | "
             f"`{_format_optional_float(overview.get('mean_progress_ratio'))}` | "
+            f"`{_format_optional_float(overview.get('mean_raw_progress_ratio'))}` | "
             f"`{float(overview.get('mean_closed_loop_score') or 0.0):.3f}` |"
         )
     markdown = "\n".join(lines) + "\n"
@@ -706,6 +739,7 @@ def _render_profile_markdown(payload: Mapping[str, Any]) -> str:
         f"| Distance error | `{_format_optional_float(overview.get('mean_min_distance_error_m'))}` |",
         f"| TTC error | `{_format_optional_float(overview.get('mean_min_ttc_error_s'))}` |",
         f"| Progress ratio | `{_format_optional_float(overview.get('mean_progress_ratio'))}` |",
+        f"| Raw progress ratio | `{_format_optional_float(overview.get('mean_raw_progress_ratio'))}` |",
         f"| Closed-loop score | `{float(overview.get('mean_closed_loop_score') or 0.0):.3f}` |",
         "",
     ]
@@ -719,8 +753,8 @@ def _render_comparison_markdown(payload: Mapping[str, Any]) -> str:
         f"- Profiles: `{payload.get('overview', {}).get('profile_count', 0)}`",
         f"- Cases: `{payload.get('overview', {}).get('case_count', 0)}`",
         "",
-        "| Profile | Cases | Ego ADE | Distance Error | Progress Ratio | Closed-Loop Score |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| Profile | Cases | Ego ADE | Distance Error | Progress Ratio | Raw Progress Ratio | Closed-Loop Score |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in payload.get("profiles", []):
         lines.append(
@@ -728,6 +762,7 @@ def _render_comparison_markdown(payload: Mapping[str, Any]) -> str:
             f"`{_format_optional_float(row.get('mean_ego_ade_m'))}` | "
             f"`{_format_optional_float(row.get('mean_min_distance_error_m'))}` | "
             f"`{_format_optional_float(row.get('mean_progress_ratio'))}` | "
+            f"`{_format_optional_float(row.get('mean_raw_progress_ratio'))}` | "
             f"`{float(row.get('mean_closed_loop_score') or 0.0):.3f}` |"
         )
     lines.append("")

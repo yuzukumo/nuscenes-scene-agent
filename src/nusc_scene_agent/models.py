@@ -43,6 +43,10 @@ class RetrievalCandidate:
     scene_description: str = ""
     num_lidar_pts: int = 0
     num_radar_pts: int = 0
+    retrieval_rank: int = 0
+    retrieval_rank_source: str = "rule_score"
+    rerank_rank: int = 0
+    rerank_source: str = "none"
 
     @classmethod
     def from_record(cls, record: Dict[str, Any]) -> "RetrievalCandidate":
@@ -68,6 +72,10 @@ class RetrievalCandidate:
             scene_description=str(record.get("scene_description") or ""),
             num_lidar_pts=int(record.get("num_lidar_pts") or 0),
             num_radar_pts=int(record.get("num_radar_pts") or 0),
+            retrieval_rank=int(record.get("retrieval_rank") or 0),
+            retrieval_rank_source=str(record.get("retrieval_rank_source") or "rule_score"),
+            rerank_rank=int(record.get("rerank_rank") or 0),
+            rerank_source=str(record.get("rerank_source") or "none"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -92,13 +100,31 @@ class ValidatedCase:
     event_localization: Dict[str, Any] = field(default_factory=dict)
     figure_path: Optional[str] = None
     report_dir: Optional[str] = None
+    gate_score: float = 0.0
+    gate_decision: Dict[str, Any] = field(default_factory=dict)
+    quality_score: Optional[float] = None
+
+    @property
+    def validation_quality_score(self) -> float:
+        if self.quality_score is not None:
+            return float(self.quality_score)
+        return float(self.validation_score)
+
+    @property
+    def acceptance_score(self) -> float:
+        """Return the quality score gated by the binary acceptance decision."""
+        return self.validation_quality_score if self.passed else 0.0
 
     def summary_dict(self) -> Dict[str, Any]:
         payload = {
             "query": self.query.to_dict(),
             "candidate": self.candidate.to_dict(),
             "validation_score": self.validation_score,
+            "validation_quality_score": self.validation_quality_score,
+            "acceptance_score": self.acceptance_score,
             "passed": self.passed,
+            "gate_score": self.gate_score,
+            "gate_decision": dict(self.gate_decision),
             "behavior_matches": dict(self.behavior_matches),
             "evidence": dict(self.evidence),
             "notes": list(self.notes),

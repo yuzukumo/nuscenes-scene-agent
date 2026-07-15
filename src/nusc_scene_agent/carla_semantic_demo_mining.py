@@ -16,8 +16,8 @@ from nusc_scene_agent.carla_vision_closed_loop import run_carla_vision_closed_lo
 
 
 CARLA_SEMANTIC_DEMO_MINING_SCHEMA = "carla_semantic_demo_mining_v1"
-DEFAULT_CARLA_SEMANTIC_DEMO_OUTPUT = Path("outputs/carla_semantic_demo_trajectory_transformer_final")
-DEFAULT_CARLA_SEMANTIC_DEMO_TRIALS_OUTPUT = Path("outputs/carla_semantic_demo_trajectory_transformer_final_trials")
+DEFAULT_CARLA_SEMANTIC_DEMO_OUTPUT = Path("outputs/carla_semantic_demo_final")
+DEFAULT_CARLA_SEMANTIC_DEMO_TRIALS_OUTPUT = Path("outputs/carla_semantic_demo_trials")
 CARLA_SEMANTIC_DEMO_REPORT_NAME = "carla_semantic_demo_report.json"
 CARLA_SEMANTIC_DEMO_AUDIT_NAME = "carla_semantic_demo_audit.json"
 
@@ -92,6 +92,7 @@ def mine_carla_semantic_demos(
     max_nearest_actor_distance_m: float = 60.0,
     nearby_actor_distance_m: float = 30.0,
     min_nearby_actor_ratio: float = 0.30,
+    require_hevc: bool = False,
 ) -> Dict[str, Any]:
     output_dir = Path(output_dir)
     trials_output_dir = Path(trials_output_dir)
@@ -188,6 +189,7 @@ def mine_carla_semantic_demos(
                     min_nearby_actor_ratio=float(min_nearby_actor_ratio),
                     require_semantic_match=True,
                     require_model_control=True,
+                    require_hevc=bool(require_hevc),
                 )
             except Exception as exc:
                 error = str(exc)
@@ -262,6 +264,7 @@ def mine_carla_semantic_demos(
             min_nearby_actor_ratio=float(min_nearby_actor_ratio),
             require_semantic_match=True,
             require_model_control=True,
+            require_hevc=bool(require_hevc),
         )
 
     mining_report = {
@@ -275,6 +278,7 @@ def mine_carla_semantic_demos(
         "passed_target_count": sum(1 for row in target_results if row.get("status") == "pass"),
         "attempt_count": sum(int(row.get("attempt_count") or 0) for row in target_results),
         "reuse_carla_server": bool(reuse_carla_server),
+        "require_hevc": bool(require_hevc),
         "targets": target_results,
         "final_report": {
             "scenario_count": final_report.get("scenario_count"),
@@ -329,7 +333,7 @@ def _attempt_from_mapping(raw: Mapping[str, Any], *, fallback_name: str) -> Carl
 
 def _default_semantic_demo_targets() -> List[CarlaSemanticDemoTarget]:
     right_turn_attempts = []
-    for idx, spawn_index in enumerate([95, 67, 107, 58, 124, 115, 0, 32, 88, 116, 52, 71], start=1):
+    for idx, spawn_index in enumerate([67, 95, 107, 58, 124, 115, 0, 32, 88, 116, 52, 71], start=1):
         right_turn_attempts.append(
             CarlaSemanticDemoAttempt(
                 name=f"right_turn_pedestrian_yield_{idx:02d}",
@@ -529,7 +533,7 @@ def _render_demo_markdown(summary: Mapping[str, Any]) -> str:
         f"- Scripted vehicles: `{int(aggregate.get('total_scripted_vehicles') or 0)}`",
         f"- Crosswalk pedestrians: `{int(aggregate.get('total_crosswalk_pedestrians') or 0)}`",
         "",
-        "| Scenario | Type | Frames | Completion | Score | Collisions | TM Vehicles | MP4 |",
+        "| Scenario | Type | Frames | Completion | Driving Score | Collisions | TM Vehicles | MP4 |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for row in list(summary.get("scenarios") or []):

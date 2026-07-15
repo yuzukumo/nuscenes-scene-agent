@@ -151,6 +151,7 @@ def build_case_map_context(
 
     actor_layer_sequence: List[Dict[str, str]] = []
     actor_lane_ids: List[str] = []
+    actor_lane_sequence: List[str] = []
     actor_global_points: List[List[float]] = []
     actor_layers_anchor: Dict[str, str] = {}
     actor_anchor_lane = ""
@@ -167,6 +168,7 @@ def build_case_map_context(
 
         actor_global_points.append([float(actor_global_xy[0]), float(actor_global_xy[1])])
         actor_layer_sequence.append(actor_layers)
+        actor_lane_sequence.append(str(actor_lane or ""))
         actor_lane_ids.append(actor_lane)
 
         if row["sample_token"] == candidate.sample_token:
@@ -184,6 +186,7 @@ def build_case_map_context(
         "ego_layers_anchor": dict(ego_layers_anchor),
         "actor_layers_anchor": dict(actor_layers_anchor),
         "ego_closest_lane": str(ego_closest_lane or ""),
+        "actor_lane_sequence": actor_lane_sequence,
         "actor_closest_lane_anchor": str(actor_anchor_lane or ""),
         "ego_in_lane_anchor": bool(
             ego_layers_anchor.get("lane") or ego_layers_anchor.get("lane_connector") or ego_closest_lane

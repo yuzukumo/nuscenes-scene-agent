@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, TypedDict
 
-from nusc_scene_agent.benchmark_registry import build_default_benchmark_registry
+from nusc_scene_agent.benchmark_catalog import build_default_benchmark_catalog
 from nusc_scene_agent.llm_client import LLMConfig, llm_json
 
 
@@ -89,7 +89,7 @@ def _collect_artifacts_node(state: ResearchAgentState) -> ResearchAgentState:
     context = {
         "schema": "research_agent_context_v1",
         "focus": str(state.get("focus") or ""),
-        "benchmark_registry": build_default_benchmark_registry(),
+        "benchmark_catalog": build_default_benchmark_catalog(),
         "artifacts": artifacts,
         "agent_nodes": [
             "collect_artifacts",

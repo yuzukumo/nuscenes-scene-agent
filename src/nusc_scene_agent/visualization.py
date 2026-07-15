@@ -168,8 +168,8 @@ def _draw_distance_panel(ax: plt.Axes, case: ValidatedCase) -> None:
 def _draw_text_panel(ax: plt.Axes, case: ValidatedCase) -> None:
     ax.axis("off")
     query_tags = ", ".join(case.query.category_groups + case.query.positions + case.query.behaviors) or "generic risk"
-    header = "Validation score: {0:.1f} | {1}".format(
-        case.validation_score, "passed" if case.passed else "candidate"
+    header = "Validation quality: {0:.1f} | {1}".format(
+        case.validation_quality_score, "passed" if case.passed else "candidate"
     )
     lines = [
         header,

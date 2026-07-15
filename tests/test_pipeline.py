@@ -1,7 +1,8 @@
 import unittest
 
 from nusc_scene_agent.models import ParsedQuery, RetrievalCandidate, ValidatedCase
-from nusc_scene_agent.pipeline import _hypothesis_priority, _select_best_hypothesis, _select_diverse_cases
+from nusc_scene_agent.pipeline import _build_agent_trace, _hypothesis_priority, _select_best_hypothesis, _select_diverse_cases
+from nusc_scene_agent.retrieval import RetrievalScoreConfig
 
 
 def make_case(sample_token: str, score: float, ann_token: str) -> ValidatedCase:
@@ -92,6 +93,27 @@ class PipelineSelectionTest(unittest.TestCase):
             ]
         )
         self.assertEqual(chosen["query"].specific_keywords, ["planner:rule"])
+
+    def test_agent_trace_records_retrieval_score_profile(self) -> None:
+        query = ParsedQuery(
+            original_text="query",
+            normalized_text="query",
+            category_groups=["vehicle"],
+            positions=["front"],
+            behaviors=["stopped_lead"],
+            near_distance_m=25.0,
+            max_ttc_s=6.0,
+            specific_keywords=["planner:rule"],
+        )
+        trace = _build_agent_trace(
+            "rule",
+            [{"name": "rule", "query": query, "candidates": [], "validated": []}],
+            query,
+            RetrievalScoreConfig(profile_name="equal"),
+        )
+
+        self.assertEqual(trace["retrieval_score_profile"], "equal")
+        self.assertEqual(trace["retrieval_score_weights"]["distance"], 1.0)
 
 
 if __name__ == "__main__":

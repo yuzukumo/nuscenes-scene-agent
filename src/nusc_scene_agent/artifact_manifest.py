@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import importlib.metadata
 import json
+import os
+import platform
+import subprocess
+import sys
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping
 
@@ -17,6 +24,8 @@ class ArtifactEntry:
     format: str
     exists: bool
     size_bytes: int = 0
+    sha256: str = ""
+    modified_at_utc: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -39,7 +48,53 @@ def build_artifact_entry(path: Path, role: str, kind: str, output_root: Path | N
         format=_artifact_format(path),
         exists=exists,
         size_bytes=path.stat().st_size if exists and path.is_file() else 0,
+        sha256=_sha256_file(path) if exists and path.is_file() else "",
+        modified_at_utc=(
+            datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+            if exists
+            else ""
+        ),
     )
+
+
+def _sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        while True:
+            chunk = stream.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _command_output(command: List[str]) -> str:
+    try:
+        completed = subprocess.run(command, check=True, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return completed.stdout.strip()
+
+
+def collect_runtime_provenance() -> Dict[str, Any]:
+    package_versions: Dict[str, str] = {}
+    for package in ["numpy", "pandas", "torch", "nuscenes-devkit", "langgraph", "PyYAML"]:
+        try:
+            package_versions[package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+
+    git_commit = _command_output(["git", "rev-parse", "HEAD"])
+    git_status = _command_output(["git", "status", "--porcelain"])
+    return {
+        "captured_at_utc": datetime.now(timezone.utc).isoformat(),
+        "git_commit": git_commit,
+        "git_dirty": bool(git_status),
+        "python": sys.version.split()[0],
+        "platform": platform.platform(),
+        "packages": package_versions,
+        "cuda_visible_devices": str(os.environ.get("CUDA_VISIBLE_DEVICES", "")),
+    }
 
 
 def write_artifact_manifest(
@@ -53,6 +108,7 @@ def write_artifact_manifest(
     payload = {
         "schema": ARTIFACT_MANIFEST_SCHEMA,
         "metadata": dict(metadata or {}),
+        "provenance": collect_runtime_provenance(),
         "overview": {
             "artifact_count": len(entries),
             "existing_artifact_count": sum(1 for item in entries if bool(item.get("exists"))),
@@ -83,18 +139,19 @@ def _render_manifest_markdown(payload: Mapping[str, Any]) -> str:
         f"- Existing artifacts: `{overview.get('existing_artifact_count', 0)}`",
         f"- Total size bytes: `{overview.get('total_size_bytes', 0)}`",
         "",
-        "| Path | Role | Kind | Format | Exists | Size Bytes |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| Path | Role | Kind | Format | Exists | Size Bytes | SHA256 |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for item in payload.get("artifacts", []):
         lines.append(
-            "| `{0}` | `{1}` | `{2}` | `{3}` | `{4}` | `{5}` |".format(
+            "| `{0}` | `{1}` | `{2}` | `{3}` | `{4}` | `{5}` | `{6}` |".format(
                 item.get("path", ""),
                 item.get("role", ""),
                 item.get("kind", ""),
                 item.get("format", ""),
                 item.get("exists", False),
                 item.get("size_bytes", 0),
+                item.get("sha256", ""),
             )
         )
     lines.append("")

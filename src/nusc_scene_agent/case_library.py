@@ -56,6 +56,10 @@ def _entry_from_case(
         "location": case.candidate.location,
         "passed": bool(case.passed),
         "validation_score": float(case.validation_score),
+        "validation_quality_score": float(case.validation_quality_score),
+        "acceptance_score": float(case.acceptance_score),
+        "validation_gate_score": float(case.gate_score),
+        "validation_gate_status": str(case.gate_decision.get("status") or ("pass" if case.passed else "fail")),
         "retrieval_score": float(case.candidate.retrieval_score),
         "min_distance_m": case.evidence.get("min_distance_m"),
         "min_ttc_s": case.evidence.get("min_ttc_s"),
@@ -129,7 +133,15 @@ def build_case_library(benchmark_results: Sequence[Dict[str, object]]) -> List[D
             )
             current["notes"] = _merge_unique_strings(list(current["notes"]) + list(entry["notes"]))
 
-            if float(entry["validation_score"]) > float(current["validation_score"]):
+            entry_priority = (
+                bool(entry["passed"]),
+                float(entry["validation_quality_score"]),
+            )
+            current_priority = (
+                bool(current["passed"]),
+                float(current["validation_quality_score"]),
+            )
+            if entry_priority > current_priority:
                 for field in [
                     "scene_name",
                     "scene_token",
@@ -141,6 +153,10 @@ def build_case_library(benchmark_results: Sequence[Dict[str, object]]) -> List[D
                     "location",
                     "passed",
                     "validation_score",
+                    "validation_quality_score",
+                    "acceptance_score",
+                    "validation_gate_score",
+                    "validation_gate_status",
                     "retrieval_score",
                     "min_distance_m",
                     "min_ttc_s",
@@ -163,7 +179,7 @@ def build_case_library(benchmark_results: Sequence[Dict[str, object]]) -> List[D
         key=lambda item: (
             bool(item["passed"]),
             len(item["source_query_ids"]),
-            float(item["validation_score"]),
+            float(item["validation_quality_score"]),
         ),
         reverse=True,
     )
@@ -188,6 +204,10 @@ def write_case_library(entries: Sequence[Dict[str, object]], output_dir: Path) -
         "location",
         "passed",
         "validation_score",
+        "validation_quality_score",
+        "acceptance_score",
+        "validation_gate_score",
+        "validation_gate_status",
         "retrieval_score",
         "min_distance_m",
         "min_ttc_s",
@@ -237,7 +257,7 @@ def write_case_library(entries: Sequence[Dict[str, object]], output_dir: Path) -
         "",
         "- Unique cases: {0}".format(len(entries)),
         "",
-        "| Rank | Scene | Sample | Actor | Hypothesis | Passed | Score | Query Hits | Queries |",
+        "| Rank | Scene | Sample | Actor | Hypothesis | Passed | Quality | Query Hits | Queries |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
 
@@ -250,7 +270,7 @@ def write_case_library(entries: Sequence[Dict[str, object]], output_dir: Path) -
                 entry["category_name"],
                 entry.get("selected_hypothesis", "query"),
                 entry["passed"],
-                float(entry["validation_score"]),
+                float(entry["validation_quality_score"]),
                 len(entry["source_query_ids"]),
                 ", ".join(entry["source_query_ids"]),
             )

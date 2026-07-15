@@ -14,7 +14,7 @@ CARLA_VIDEO_AUDIT_SCHEMA = "carla_vision_video_audit_v1"
 
 
 def audit_carla_vision_rollouts(
-    report_path: Path = Path("outputs/carla_semantic_demo_trajectory_transformer_final/carla_semantic_demo_report.json"),
+    report_path: Path = Path("outputs/carla_semantic_demo_final/carla_semantic_demo_report.json"),
     output_path: Optional[Path] = None,
     *,
     min_resolution_width: int = 1920,
@@ -33,6 +33,7 @@ def audit_carla_vision_rollouts(
     min_nearby_actor_ratio: float = 0.30,
     require_semantic_match: bool = False,
     require_model_control: bool = True,
+    require_hevc: bool = False,
 ) -> Dict[str, Any]:
     report_path = Path(report_path)
     report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -56,6 +57,7 @@ def audit_carla_vision_rollouts(
             min_nearby_actor_ratio=float(min_nearby_actor_ratio),
             require_semantic_match=bool(require_semantic_match),
             require_model_control=bool(require_model_control),
+            require_hevc=bool(require_hevc),
         )
         for scenario in scenario_reports
     ]
@@ -87,6 +89,7 @@ def audit_carla_vision_rollouts(
             "min_nearby_actor_ratio": float(min_nearby_actor_ratio),
             "require_semantic_match": bool(require_semantic_match),
             "require_model_control": bool(require_model_control),
+            "require_hevc": bool(require_hevc),
         },
         "summary": _audit_summary(scenarios),
         "scenarios": scenarios,
@@ -129,6 +132,7 @@ def _audit_scenario(
     min_nearby_actor_ratio: float,
     require_semantic_match: bool,
     require_model_control: bool,
+    require_hevc: bool,
 ) -> Dict[str, Any]:
     name = str(scenario.get("name") or _nested(scenario, ["scenario", "name"]) or "scenario")
     metrics = dict(scenario.get("metrics") or {})
@@ -169,12 +173,22 @@ def _audit_scenario(
         failures.append(f"{name}:video_frame_count_below_threshold")
     codec = str(video.get("codec_name") or video.get("fourcc") or "").lower()
     if codec not in {"hevc", "hvc1", "hev1", "x265"}:
-        warnings.append(f"{name}:video_codec_not_confirmed_as_hevc")
+        message = f"{name}:video_codec_not_confirmed_as_hevc"
+        if require_hevc:
+            failures.append(message)
+        else:
+            warnings.append(message)
     if not states["exists"]:
         failures.append(f"{name}:missing_states_csv")
     if int(states.get("row_count") or 0) != int(video.get("frame_count") or 0):
         warnings.append(f"{name}:states_video_frame_count_mismatch")
-    if require_model_control and float(attribution.get("direct_model_control_ratio") or 0.0) < 0.99:
+    model_waypoint_ratio = float(
+        attribution.get("model_waypoint_controller_ratio")
+        if attribution.get("model_waypoint_controller_ratio") is not None
+        else attribution.get("direct_model_control_ratio")
+        or 0.0
+    )
+    if require_model_control and model_waypoint_ratio < 0.99:
         failures.append(f"{name}:ego_not_model_controlled_for_full_rollout")
     if bool(attribution.get("ego_uses_carla_autopilot")):
         failures.append(f"{name}:ego_uses_carla_autopilot")
@@ -196,7 +210,11 @@ def _audit_scenario(
         if states.get("projected_ego_on_driving_lane_ratio") is not None
         else states.get("ego_on_driving_lane_ratio")
     )
-    if lane_ratio is not None and float(lane_ratio or 0.0) < 0.95:
+    strict_straight_lane_ratio = states.get("straight_projected_ego_on_driving_lane_ratio")
+    lane_check_ratio = (
+        strict_straight_lane_ratio if strict_straight_lane_ratio is not None else lane_ratio
+    )
+    if lane_check_ratio is not None and float(lane_check_ratio or 0.0) < 0.95:
         failures.append(f"{name}:ego_left_driving_lane")
     if float(metrics.get("route_completion") or 0.0) < float(min_route_completion):
         warnings.append(f"{name}:low_route_completion")
@@ -242,9 +260,16 @@ def _audit_scenario(
             else metrics.get("post_crossing_max_speed_mps"),
             "ego_on_driving_lane_ratio": states.get("ego_on_driving_lane_ratio"),
             "projected_ego_on_driving_lane_ratio": states.get("projected_ego_on_driving_lane_ratio"),
+            "straight_projected_ego_on_driving_lane_ratio": strict_straight_lane_ratio,
+            "lane_check_ratio": lane_check_ratio,
+            "turn_maneuver_frame_count": states.get("turn_maneuver_frame_count"),
             "max_driving_lane_center_distance_m": states.get("max_driving_lane_center_distance_m"),
         },
         "control_attribution": {
+            "model_waypoint_controller_ratio": model_waypoint_ratio,
+            "network_control_blend_ratio": attribution.get("network_control_blend_ratio"),
+            "lane_departure_guard_ratio": attribution.get("lane_departure_guard_ratio"),
+            "control_pipeline": attribution.get("control_pipeline"),
             "direct_model_control_ratio": attribution.get("direct_model_control_ratio"),
             "safety_override_ratio": attribution.get("safety_override_ratio"),
             "ego_uses_carla_autopilot": attribution.get("ego_uses_carla_autopilot", False),
@@ -252,6 +277,7 @@ def _audit_scenario(
             "traffic_manager_vehicle_count": attribution.get("traffic_manager_vehicle_count"),
             "scripted_vehicle_count": attribution.get("scripted_vehicle_count"),
             "crosswalk_walker_count": attribution.get("crosswalk_walker_count"),
+            "controlled_walker_count": attribution.get("controlled_walker_count"),
         },
         "video": video,
         "states": states,
@@ -407,6 +433,18 @@ def _inspect_states_csv(
                 payload["projected_ego_on_driving_lane_ratio"] = (
                     projected_lane_rows / projected_lane_valid_rows
                 )
+            if "command" in payload["columns"]:
+                turn_rows = [
+                    row for row in rows if int(_float(row.get("command")) or 4) in {1, 2}
+                ]
+                straight_rows = [
+                    row for row in rows if int(_float(row.get("command")) or 4) not in {1, 2}
+                ]
+                payload["turn_maneuver_frame_count"] = len(turn_rows)
+                payload["straight_frame_count"] = len(straight_rows)
+                straight_ratio = _projected_lane_ratio(straight_rows)
+                if straight_ratio is not None:
+                    payload["straight_projected_ego_on_driving_lane_ratio"] = straight_ratio
         payload["right_turn_command_ratio"] = sum(
             1 for row in rows if int(_float(row.get("command")) or 4) == 2
         ) / len(rows)
@@ -678,6 +716,21 @@ def _float(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _projected_lane_ratio(rows: Sequence[Mapping[str, Any]]) -> Optional[float]:
+    valid = 0
+    on_lane = 0
+    for row in rows:
+        lane_distance = _optional_nonnegative_float(row.get("ego_nearest_driving_lane_center_distance_m"))
+        if lane_distance is None:
+            continue
+        lane_width = _float(row.get("ego_driving_lane_width_m"))
+        distance_limit = max(float(lane_width) * 0.60, 2.05) if lane_width > 0.0 else 2.05
+        valid += 1
+        if float(lane_distance) <= distance_limit:
+            on_lane += 1
+    return on_lane / valid if valid else None
 
 
 def _optional_nonnegative_float(value: Any) -> Optional[float]:

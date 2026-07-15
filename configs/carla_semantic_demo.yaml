@@ -1,14 +1,14 @@
 experiment:
   id: carla_semantic_demo
   type: carla_semantic_demo_mining
-  output: outputs/carla_semantic_demo_trajectory_transformer_final
-  result_path: outputs/carla_semantic_demo_trajectory_transformer_final/experiment_result.json
+  output: outputs/carla_semantic_demo_final
+  result_path: outputs/carla_semantic_demo_final/experiment_result.json
 
 carla_semantic_demo:
   carla_root: external/carla/latest
-  checkpoint: outputs/bench2drive_vision_e2e_trajectory_transformer_final/vision_e2e_planner_best.pt
-  output: outputs/carla_semantic_demo_trajectory_transformer_final
-  trials_output: outputs/carla_semantic_demo_trajectory_transformer_final_trials
+  checkpoint: outputs/bench2drive_vision_e2e_final/vision_e2e_planner_calibrated.pt
+  output: outputs/carla_semantic_demo_final
+  trials_output: outputs/carla_semantic_demo_trials
   host: 127.0.0.1
   port_start: 2040
   traffic_manager_port_start: 8040
@@ -29,7 +29,7 @@ carla_semantic_demo:
   launch_timeout_s: 180.0
   rpc_timeout_s: 90.0
   keep_server: false
-  reuse_carla_server: false
+  reuse_carla_server: true
   video_fps: 10
   video_encoder: hevc_nvenc
   video_nvenc_preset: p4
@@ -55,3 +55,4 @@ carla_semantic_demo:
   max_nearest_actor_distance_m: 60.0
   nearby_actor_distance_m: 30.0
   min_nearby_actor_ratio: 0.30
+  require_hevc: true

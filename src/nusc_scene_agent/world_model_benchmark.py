@@ -327,7 +327,10 @@ def _unique_strings(values: Sequence[str]) -> List[str]:
 
 
 def _distance_m(lhs: Dict[str, object], rhs: Dict[str, object]) -> float:
-    return math.hypot(_safe_float(lhs["x_ego"]) - _safe_float(rhs["x_ego"]), _safe_float(lhs["y_ego"]) - _safe_float(rhs["y_ego"]))
+    return math.hypot(
+        _safe_float(lhs.get("x_ego")) - _safe_float(rhs.get("x_ego")),
+        _safe_float(lhs.get("y_ego")) - _safe_float(rhs.get("y_ego")),
+    )
 
 
 def _sorted_unique_cells(cells: Iterable[Tuple[int, int]]) -> List[List[int]]:
@@ -554,6 +557,38 @@ def _attach_global_frame_geometry(
     return enriched
 
 
+def _convert_frames_to_anchor_ego(
+    frames: Sequence[Dict[str, object]],
+    anchor_frame: Mapping[str, object],
+) -> List[Dict[str, object]]:
+    anchor_x = _safe_float(anchor_frame.get("ego_x_global"))
+    anchor_y = _safe_float(anchor_frame.get("ego_y_global"))
+    anchor_yaw = _safe_float(anchor_frame.get("ego_yaw"))
+    converted = []
+    for frame in frames:
+        row = dict(frame)
+        if row.get("x_global") is not None and row.get("y_global") is not None:
+            local_xy = global_xy_to_anchor_ego(
+                np.asarray([[_safe_float(row["x_global"]), _safe_float(row["y_global"])]], dtype=float),
+                [anchor_x, anchor_y],
+                anchor_yaw,
+            )[0]
+            row["x_current_ego"] = row.get("x_ego")
+            row["y_current_ego"] = row.get("y_ego")
+            row["current_ego_yaw"] = row.get("ego_yaw")
+            row["x_ego"] = round(float(local_xy[0]), 4)
+            row["y_ego"] = round(float(local_xy[1]), 4)
+            row["ego_yaw"] = round(anchor_yaw, 6)
+            row["x_anchor_ego"] = row["x_ego"]
+            row["y_anchor_ego"] = row["y_ego"]
+        row["coordinate_frame"] = "rollout_anchor_ego"
+        row["anchor_ego_x_global"] = round(anchor_x, 4)
+        row["anchor_ego_y_global"] = round(anchor_y, 4)
+        row["anchor_ego_yaw"] = round(anchor_yaw, 6)
+        converted.append(row)
+    return converted
+
+
 def generate_world_model_benchmark_from_perception_benchmark(
     perception_benchmark_path: Path,
     db_path: Path,
@@ -586,20 +621,34 @@ def generate_world_model_benchmark_from_perception_benchmark(
     for raw_case, history_frames, future_frames in split_cases:
         history_frames = _attach_global_frame_geometry(history_frames, sample_pose_index)
         future_frames = _attach_global_frame_geometry(future_frames, sample_pose_index)
+        history_frames = _convert_frames_to_anchor_ego(history_frames, history_frames[-1])
+        future_frames = _convert_frames_to_anchor_ego(future_frames, history_frames[-1])
         future_occupancy = []
         for frame in future_frames:
             sample_token = str(frame["sample_token"])
             sample_rows = list(context_index.get(sample_token) or [])
+            pose = dict(sample_pose_index.get(sample_token) or {})
+            context_anchor_points = []
+            for row in sample_rows:
+                if str(row["instance_token"]) == str(raw_case["instance_token"]):
+                    continue
+                global_xy = ego_xy_to_global(
+                    [_safe_float(row["x_ego"]), _safe_float(row["y_ego"])],
+                    [float(pose.get("ego_x", 0.0)), float(pose.get("ego_y", 0.0))],
+                    float(pose.get("ego_yaw", 0.0)),
+                )
+                anchor_xy = global_xy_to_anchor_ego(
+                    np.asarray([[float(global_xy[0]), float(global_xy[1])]], dtype=float),
+                    [_safe_float(history_frames[-1]["ego_x_global"]), _safe_float(history_frames[-1]["ego_y_global"])],
+                    _safe_float(history_frames[-1]["ego_yaw"]),
+                )[0]
+                context_anchor_points.append((float(anchor_xy[0]), float(anchor_xy[1])))
             primary_cells = _rasterize_points(
                 [(_safe_float(frame["x_ego"]), _safe_float(frame["y_ego"]))],
                 grid,
             )
             context_cells = _rasterize_points(
-                [
-                    (_safe_float(row["x_ego"]), _safe_float(row["y_ego"]))
-                    for row in sample_rows
-                    if str(row["instance_token"]) != str(raw_case["instance_token"])
-                ],
+                context_anchor_points,
                 grid,
             )
             future_occupancy.append(
@@ -610,6 +659,7 @@ def generate_world_model_benchmark_from_perception_benchmark(
                     "primary_actor_cells": primary_cells,
                     "context_cells": context_cells,
                     "occupied_cells": _build_union_cells(primary_cells, context_cells),
+                    "coordinate_frame": "rollout_anchor_ego",
                     "context_actor_count": sum(
                         1 for row in sample_rows if str(row["instance_token"]) != str(raw_case["instance_token"])
                     ),
@@ -651,6 +701,8 @@ def generate_world_model_benchmark_from_perception_benchmark(
             "min_distance_m": raw_case.get("min_distance_m"),
             "min_ttc_s": raw_case.get("min_ttc_s"),
             "anchor_visibility": raw_case.get("anchor_visibility"),
+            "coordinate_frame": "rollout_anchor_ego",
+            "uses_future_ego_pose_for_targets": False,
         }
         case["challenge_tracks"] = _challenge_tracks(case)
         cases.append(case)
@@ -680,6 +732,7 @@ def _copy_future_trajectory(case: Dict[str, object]) -> List[Dict[str, object]]:
             "timestamp_us": _safe_int(frame["timestamp_us"]),
             "x_ego": round(_safe_float(frame["x_ego"]), 4),
             "y_ego": round(_safe_float(frame["y_ego"]), 4),
+            "coordinate_frame": "rollout_anchor_ego",
         }
         for frame in list(case.get("future_frames") or [])
     ]
@@ -822,6 +875,8 @@ def generate_proxy_world_model_predictions(
             "generator": "proxy_world_model_predictions_v1",
             "profile_name": profile_name,
             "source_benchmark": str(benchmark_path),
+            "coordinate_frame": "rollout_anchor_ego",
+            "uses_future_ego_pose_for_targets": False,
         },
         "predictions": predictions,
     }
@@ -1188,10 +1243,11 @@ def _local_trajectory_from_global_mode(
         global_xy = list(mode_trajectory[step_idx] or [])
         if len(global_xy) < 2:
             continue
+        anchor_frame = dict(list(case.get("history_frames") or [{}])[-1])
         local_xy = global_xy_to_anchor_ego(
             np.asarray([[float(global_xy[0]), float(global_xy[1])]], dtype=float),
-            [_safe_float(frame.get("ego_x_global")), _safe_float(frame.get("ego_y_global"))],
-            _safe_float(frame.get("ego_yaw")),
+            [_safe_float(anchor_frame.get("ego_x_global")), _safe_float(anchor_frame.get("ego_y_global"))],
+            _safe_float(anchor_frame.get("ego_yaw")),
         )[0]
         future_trajectory.append(
             {
@@ -1202,6 +1258,7 @@ def _local_trajectory_from_global_mode(
                 "y_ego": round(float(local_xy[1]), 4),
                 "x_global": round(float(global_xy[0]), 4),
                 "y_global": round(float(global_xy[1]), 4),
+                "coordinate_frame": "rollout_anchor_ego",
             }
         )
     return future_trajectory
@@ -2049,6 +2106,124 @@ def build_world_model_comparison(run_summaries: Sequence[Dict[str, object]]) -> 
         reverse=True,
     )
     profile_order = [str(row["name"]) for row in profiles]
+    full_set_profiles = [dict(row) for row in profiles]
+
+    case_maps = {}
+    for item in run_summaries:
+        profile_name = str(item.get("profile_name") or "profile")
+        case_map = {}
+        for row in list(item.get("case_metrics") or []):
+            key = str(row.get("benchmark_group") or row.get("reference_case_key") or "")
+            if key:
+                case_map[key] = dict(row)
+        case_maps[profile_name] = case_map
+    common_case_keys = set.intersection(*(set(mapping) for mapping in case_maps.values())) if case_maps else set()
+
+    def _common_metric_rows(rows: Sequence[Dict[str, object]]) -> Dict[str, object]:
+        def _mean_metric(name: str) -> float:
+            values = [float(row[name]) for row in rows if row.get(name) is not None]
+            return round(mean(values), 4) if values else 0.0
+
+        full_horizon_count = sum(1 for row in rows if bool(row.get("full_horizon_success")))
+        return {
+            "case_count": len(rows),
+            "full_horizon_count": full_horizon_count,
+            "full_horizon_rate": round(_ratio(full_horizon_count, len(rows)), 4),
+            "mean_horizon_recall": _mean_metric("horizon_recall"),
+            "mean_ade_m": _mean_metric("ade_m"),
+            "mean_fde_m": _mean_metric("fde_m"),
+            "mean_occupancy_iou": _mean_metric("occupancy_iou"),
+            "mean_primary_actor_iou": _mean_metric("primary_actor_iou"),
+            "mean_risk_fidelity_score": _mean_metric("risk_fidelity_score"),
+            "mean_min_ade_at_5": _mean_metric("min_ade_at_5"),
+            "mean_miss_rate_at_5": _mean_metric("miss_rate_at_5"),
+        }
+
+    common_case_summary = []
+    bootstrap_seed = 7
+    bootstrap_replicates = 5000
+    ordered_common_keys = sorted(common_case_keys)
+    bootstrap_rng = np.random.default_rng(bootstrap_seed)
+    bootstrap_indices = (
+        bootstrap_rng.integers(
+            0,
+            len(ordered_common_keys),
+            size=(bootstrap_replicates, len(ordered_common_keys)),
+        )
+        if ordered_common_keys
+        else np.empty((0, 0), dtype=int)
+    )
+    for profile_name in profile_order:
+        common_rows = [case_maps.get(profile_name, {}).get(key, {}) for key in ordered_common_keys]
+        summary_row = {
+            "name": profile_name,
+            "label": profile_name.replace("_", "-").title(),
+            **_common_metric_rows(common_rows),
+        }
+        metric_uncertainty: Dict[str, Dict[str, float]] = {}
+        for metric_name in ["ade_m", "fde_m", "risk_fidelity_score", "occupancy_iou"]:
+            values = np.asarray([float(row.get(metric_name) or 0.0) for row in common_rows], dtype=float)
+            if values.size:
+                bootstrap_means = np.mean(values[bootstrap_indices], axis=1)
+                low, high = np.percentile(bootstrap_means, [2.5, 97.5])
+                metric_uncertainty[metric_name] = {
+                    "mean": round(float(np.mean(values)), 6),
+                    "ci95_low": round(float(low), 6),
+                    "ci95_high": round(float(high), 6),
+                }
+        summary_row["uncertainty"] = metric_uncertainty
+        common_case_summary.append(summary_row)
+
+    paired_profile_comparisons = []
+    if ordered_common_keys:
+        for left_idx, left_name in enumerate(profile_order):
+            for right_name in profile_order[left_idx + 1 :]:
+                comparison_row: Dict[str, object] = {
+                    "profile_a": left_name,
+                    "profile_b": right_name,
+                    "case_count": len(ordered_common_keys),
+                    "deltas": {},
+                }
+                for metric_name in ["ade_m", "fde_m", "risk_fidelity_score", "occupancy_iou"]:
+                    left_values = np.asarray(
+                        [float(case_maps[left_name][key].get(metric_name) or 0.0) for key in ordered_common_keys],
+                        dtype=float,
+                    )
+                    right_values = np.asarray(
+                        [float(case_maps[right_name][key].get(metric_name) or 0.0) for key in ordered_common_keys],
+                        dtype=float,
+                    )
+                    deltas = right_values - left_values
+                    bootstrap_deltas = np.mean(deltas[bootstrap_indices], axis=1)
+                    low, high = np.percentile(bootstrap_deltas, [2.5, 97.5])
+                    comparison_row["deltas"][metric_name] = {
+                        "profile_b_minus_profile_a": round(float(np.mean(deltas)), 6),
+                        "ci95_low": round(float(low), 6),
+                        "ci95_high": round(float(high), 6),
+                    }
+                paired_profile_comparisons.append(comparison_row)
+
+    if common_case_keys:
+        common_by_name = {str(row["name"]): dict(row) for row in common_case_summary}
+        profiles = [
+            {
+                **row,
+                **common_by_name[str(row["name"])],
+                "full_set_case_count": int(row.get("case_count") or 0),
+            }
+            for row in full_set_profiles
+        ]
+        profiles.sort(
+            key=lambda row: (
+                float(row["mean_risk_fidelity_score"]),
+                float(row["full_horizon_rate"]),
+                -float(row["mean_min_ade_at_5"]),
+                -float(row["mean_ade_m"]),
+                float(row["mean_occupancy_iou"]),
+            ),
+            reverse=True,
+        )
+        profile_order = [str(row["name"]) for row in profiles]
 
     behavior_matrix = []
     for behavior in sorted(behavior_index):
@@ -2119,9 +2294,17 @@ def build_world_model_comparison(run_summaries: Sequence[Dict[str, object]]) -> 
     return {
         "overview": {
             "profile_count": len(profiles),
-            "case_count": int(profiles[0]["case_count"]) if profiles else 0,
+            "case_count": len(common_case_keys) if common_case_keys else (int(profiles[0]["case_count"]) if profiles else 0),
+            "common_case_count": len(common_case_keys),
+            "comparison_basis": "common_case_intersection" if common_case_keys else "profile_specific_cases",
+            "uncertainty_method": "paired case-level percentile bootstrap" if common_case_keys else "none",
+            "bootstrap_seed": bootstrap_seed if common_case_keys else None,
+            "bootstrap_replicates": bootstrap_replicates if common_case_keys else 0,
         },
         "profiles": profiles,
+        "full_set_profiles": full_set_profiles,
+        "common_case_summary": common_case_summary,
+        "paired_profile_comparisons": paired_profile_comparisons,
         "behavior_matrix": behavior_matrix,
         "track_matrix": track_matrix,
         "risk_matrices": risk_matrices,
@@ -2141,6 +2324,8 @@ def write_world_model_comparison(comparison: Dict[str, object], output_dir: Path
         "",
         "- Profiles: {0}".format(comparison["overview"]["profile_count"]),
         "- Cases: {0}".format(comparison["overview"]["case_count"]),
+        "- Common cases across all profiles: {0}".format(comparison["overview"].get("common_case_count", 0)),
+        "- Primary comparison basis: `{0}`".format(comparison["overview"].get("comparison_basis", "")),
         "",
         "## Profile Overview",
         "",
@@ -2161,6 +2346,56 @@ def write_world_model_comparison(comparison: Dict[str, object], output_dir: Path
                 row["mean_miss_rate_at_5"],
                 row["mean_occupancy_iou"],
                 row["mean_closest_approach_time_error_s"],
+            )
+        )
+    lines.extend(
+        [
+            "",
+            "## Common-Case Comparison",
+            "",
+            "All rows below use the intersection of case keys across profiles.",
+            "",
+            "| Profile | Cases | Full Horizon | ADE | FDE | Risk Fidelity | Occupancy IoU |",
+            "| --- | ---: | --- | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for row in list(comparison.get("common_case_summary") or []):
+        lines.append(
+            "| {0} | {1} | {2}/{1} ({3:.1%}) | {4:.3f} | {5:.3f} | {6:.3f} | {7:.3f} |".format(
+                row["label"],
+                row["case_count"],
+                row["full_horizon_count"],
+                row["full_horizon_rate"],
+                row["mean_ade_m"],
+                row["mean_fde_m"],
+                row["mean_risk_fidelity_score"],
+                row["mean_occupancy_iou"],
+            )
+        )
+    lines.extend(
+        [
+            "",
+            "## Paired Uncertainty",
+            "",
+            "Deltas are profile B minus profile A on the same cases. Lower ADE is better; higher risk fidelity is better.",
+            "",
+            "| Profile A | Profile B | ADE Delta [95% CI] | Risk-Fidelity Delta [95% CI] |",
+            "| --- | --- | ---: | ---: |",
+        ]
+    )
+    for row in list(comparison.get("paired_profile_comparisons") or []):
+        ade = dict(dict(row.get("deltas") or {}).get("ade_m") or {})
+        risk = dict(dict(row.get("deltas") or {}).get("risk_fidelity_score") or {})
+        lines.append(
+            "| {0} | {1} | {2:.3f} [{3:.3f}, {4:.3f}] | {5:.3f} [{6:.3f}, {7:.3f}] |".format(
+                str(row.get("profile_a") or "").replace("_", "-").title(),
+                str(row.get("profile_b") or "").replace("_", "-").title(),
+                float(ade.get("profile_b_minus_profile_a") or 0.0),
+                float(ade.get("ci95_low") or 0.0),
+                float(ade.get("ci95_high") or 0.0),
+                float(risk.get("profile_b_minus_profile_a") or 0.0),
+                float(risk.get("ci95_low") or 0.0),
+                float(risk.get("ci95_high") or 0.0),
             )
         )
     lines.extend(["", "## Challenge Track Matrix", "", "| Track | " + " | ".join(str(row["label"]) for row in list(comparison.get("profiles") or [])) + " |", "| --- | " + " | ".join("---" for _ in list(comparison.get("profiles") or [])) + " |"])

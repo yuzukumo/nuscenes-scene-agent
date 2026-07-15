@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import math
+import os
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Tuple
 
@@ -10,6 +12,137 @@ from nuscenes.nuscenes import NuScenes
 
 from nusc_scene_agent.geometry import build_world_to_ego_matrix, global_to_ego_point, normalize_angle
 from nusc_scene_agent.geometry import velocity_world_to_ego, yaw_from_rotation
+
+
+INDEX_SCHEMA_NAME = "nusc_scene_agent_index"
+INDEX_SCHEMA_VERSION = "1"
+INDEX_SCHEMA_COMPATIBLE_VERSIONS = {INDEX_SCHEMA_VERSION}
+
+INDEX_REQUIRED_COLUMNS = {
+    "samples": {
+        "sample_token",
+        "scene_token",
+        "scene_name",
+        "scene_description",
+        "sample_idx",
+        "timestamp_us",
+        "location",
+        "ego_x",
+        "ego_y",
+        "ego_yaw",
+    },
+    "agents": {
+        "ann_token",
+        "sample_token",
+        "scene_token",
+        "scene_name",
+        "sample_idx",
+        "instance_token",
+        "category_name",
+        "category_group",
+        "x_ego",
+        "y_ego",
+        "z_ego",
+        "distance",
+        "visibility",
+        "ttc",
+        "speed",
+        "rel_vx",
+        "rel_vy",
+        "heading_delta",
+        "num_lidar_pts",
+        "num_radar_pts",
+        "width",
+        "length",
+        "height",
+        "is_front",
+        "is_rear",
+        "is_left",
+        "is_right",
+        "is_stationary",
+    },
+}
+
+
+def read_index_metadata(conn: sqlite3.Connection) -> Dict[str, str]:
+    try:
+        rows = conn.execute("SELECT key, value FROM metadata").fetchall()
+    except sqlite3.Error as exc:
+        raise RuntimeError("SQLite index does not contain readable metadata.") from exc
+    return {str(key): str(value) for key, value in rows}
+
+
+def validate_index_schema(conn: sqlite3.Connection) -> Dict[str, str]:
+    metadata = read_index_metadata(conn)
+    schema_name = metadata.get("schema", "")
+    schema_version = metadata.get("schema_version", "")
+    if schema_name != INDEX_SCHEMA_NAME:
+        raise RuntimeError(
+            "Unsupported SQLite index schema: {0!r}; expected {1!r}.".format(schema_name, INDEX_SCHEMA_NAME)
+        )
+    if schema_version not in INDEX_SCHEMA_COMPATIBLE_VERSIONS:
+        raise RuntimeError(
+            "Unsupported SQLite index schema version: {0!r}; compatible versions: {1}. Rebuild the index."
+            .format(schema_version, sorted(INDEX_SCHEMA_COMPATIBLE_VERSIONS))
+        )
+    if metadata.get("build_complete") != "true":
+        raise RuntimeError("SQLite index metadata does not mark the build as complete. Rebuild or migrate the index.")
+    _validate_required_columns(conn)
+    return metadata
+
+
+def _validate_required_columns(conn: sqlite3.Connection) -> None:
+    for table, required in INDEX_REQUIRED_COLUMNS.items():
+        available = {str(row[1]) for row in conn.execute("PRAGMA table_info({0})".format(table)).fetchall()}
+        missing = sorted(required - available)
+        if missing:
+            raise RuntimeError(
+                "SQLite index table {0!r} is missing required columns: {1}. Rebuild the index.".format(
+                    table,
+                    ", ".join(missing),
+                )
+            )
+
+
+def migrate_index_schema(db_path: Path) -> Dict[str, str]:
+    """Stamp a structurally compatible pre-versioned index as schema version 1."""
+    db_path = Path(db_path).resolve()
+    if not db_path.exists():
+        raise FileNotFoundError("Missing SQLite index: {0}".format(db_path))
+    conn = sqlite3.connect(str(db_path))
+    try:
+        metadata = read_index_metadata(conn)
+        if metadata.get("schema") == INDEX_SCHEMA_NAME:
+            return validate_index_schema(conn)
+        if metadata.get("schema"):
+            raise RuntimeError("Cannot migrate unknown SQLite index schema: {0!r}.".format(metadata["schema"]))
+        _validate_required_columns(conn)
+        integrity = str(conn.execute("PRAGMA integrity_check;").fetchone()[0])
+        if integrity.lower() != "ok":
+            raise RuntimeError("SQLite integrity check failed: {0}".format(integrity))
+        counts = {
+            "sample_count": str(conn.execute("SELECT COUNT(*) FROM samples").fetchone()[0]),
+            "agent_count": str(conn.execute("SELECT COUNT(*) FROM agents").fetchone()[0]),
+        }
+        migrated_at = datetime.now(timezone.utc).isoformat()
+        conn.execute("BEGIN IMMEDIATE")
+        conn.executemany(
+            "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
+            [
+                ("schema", INDEX_SCHEMA_NAME),
+                ("schema_version", INDEX_SCHEMA_VERSION),
+                ("build_complete", "true"),
+                ("migrated_at_utc", migrated_at),
+                *counts.items(),
+            ],
+        )
+        conn.commit()
+        return validate_index_schema(conn)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def simplify_category(category_name: str) -> str:
@@ -217,13 +350,23 @@ def build_index(
     _ensure_parent(db_path)
     nusc = NuScenes(version=version, dataroot=str(dataroot), verbose=verbose)
 
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=OFF;")
+    build_path = db_path.with_name(db_path.name + ".building")
+    for path in [build_path, Path(str(build_path) + "-wal"), Path(str(build_path) + "-shm")]:
+        path.unlink(missing_ok=True)
+
+    conn = sqlite3.connect(str(build_path))
+    conn.execute("PRAGMA journal_mode=DELETE;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
     _build_schema(conn)
     conn.executemany(
         "INSERT INTO metadata(key, value) VALUES (?, ?)",
-        [("version", version), ("dataroot", str(dataroot))],
+        [
+            ("schema", INDEX_SCHEMA_NAME),
+            ("schema_version", INDEX_SCHEMA_VERSION),
+            ("version", version),
+            ("dataroot", str(dataroot)),
+            ("build_started_at_utc", datetime.now(timezone.utc).isoformat()),
+        ],
     )
 
     pose_cache: Dict[str, Tuple[np.ndarray, float]] = {}
@@ -341,6 +484,21 @@ def build_index(
         _flush_rows(conn, sample_rows, agent_rows)
         conn.commit()
 
+    conn.executemany(
+        "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
+        [
+            ("scene_count", str(stats["scene_count"])),
+            ("sample_count", str(stats["sample_count"])),
+            ("agent_count", str(stats["agent_count"])),
+            ("build_complete", "true"),
+            ("build_completed_at_utc", datetime.now(timezone.utc).isoformat()),
+        ],
+    )
     conn.commit()
+    integrity = str(conn.execute("PRAGMA integrity_check;").fetchone()[0])
     conn.close()
+    if integrity.lower() != "ok":
+        build_path.unlink(missing_ok=True)
+        raise RuntimeError("SQLite integrity check failed: {0}".format(integrity))
+    os.replace(build_path, db_path)
     return stats

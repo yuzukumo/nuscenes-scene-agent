@@ -32,6 +32,10 @@ class BenchmarkComparisonTest(unittest.TestCase):
                 metrics = {
                     "overview": {
                         "query_count": 2,
+                        "validation_acceptance_at_1_count": pass_at_1_count,
+                        "validation_acceptance_at_1_rate": pass_at_1_count / 2.0,
+                        "validation_acceptance_at_k_count": pass_at_1_count,
+                        "validation_acceptance_at_k_rate": pass_at_1_count / 2.0,
                         "pass_at_1_count": pass_at_1_count,
                         "pass_at_1_rate": pass_at_1_count / 2.0,
                         "pass_at_k_count": pass_at_1_count,
@@ -56,6 +60,8 @@ class BenchmarkComparisonTest(unittest.TestCase):
                             "description": "desc 1",
                             "actors": ["vehicle"],
                             "behaviors": ["cut_in"],
+                            "validation_acceptance_at_1": True,
+                            "validation_acceptance_at_k": True,
                             "pass_at_1": True,
                             "pass_at_k": True,
                             "best_validation_score": mean_score,
@@ -72,6 +78,8 @@ class BenchmarkComparisonTest(unittest.TestCase):
                             "description": "desc 2",
                             "actors": ["pedestrian"],
                             "behaviors": ["crossing"],
+                            "validation_acceptance_at_1": bool(pass_at_1_count == 2),
+                            "validation_acceptance_at_k": bool(pass_at_1_count == 2),
                             "pass_at_1": bool(pass_at_1_count == 2),
                             "pass_at_k": bool(pass_at_1_count == 2),
                             "best_validation_score": mean_score - 10.0,
@@ -125,10 +133,23 @@ class BenchmarkComparisonTest(unittest.TestCase):
             self.assertEqual(comparison["profiles"][1]["reference_query_count"], 2)
             self.assertEqual(comparison["profiles"][1]["scenario_group_count"], 1)
             self.assertEqual(comparison["leaderboard"][0]["name"], "hybrid_agent")
+            self.assertEqual(
+                comparison["leaderboard"][0]["validation_acceptance_at_1_count"],
+                2,
+            )
+            self.assertTrue(
+                comparison["query_comparison"][0]["profiles"]["hybrid_agent"][
+                    "validation_acceptance_at_1"
+                ]
+            )
             self.assertEqual(len(comparison["behavior_error_analysis"]), 2)
             self.assertIn("profile_summary", comparison["behavior_error_analysis"][0])
             self.assertEqual(comparison["query_comparison"][0]["best_profile"], "hybrid_agent")
             self.assertEqual(comparison["deltas_vs_baseline"][0]["profile"], "hybrid_agent")
+            self.assertEqual(
+                comparison["deltas_vs_baseline"][0]["validation_acceptance_at_1_gain"],
+                1,
+            )
 
             write_benchmark_comparison(comparison, root)
             self.assertTrue((root / "benchmark_profile_comparison.json").exists())
@@ -139,6 +160,62 @@ class BenchmarkComparisonTest(unittest.TestCase):
             self.assertTrue((root / "behavior_error_analysis.md").exists())
             self.assertTrue((root / "behavior_error_analysis.csv").exists())
             self.assertTrue((root / "behavior_error_analysis.html").exists())
+            leaderboard_header = (root / "benchmark_leaderboard.csv").read_text(
+                encoding="utf-8"
+            ).splitlines()[0]
+            self.assertIn("validation_acceptance_at_1_count", leaderboard_header)
+            self.assertNotIn("pass_at_1_count", leaderboard_header)
+
+    def test_build_benchmark_comparison_prefers_canonical_acceptance_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            profile_dir = root / "profile"
+            profile_dir.mkdir()
+            (profile_dir / "benchmark_metrics.json").write_text(
+                json.dumps(
+                    {
+                        "overview": {
+                            "query_count": 1,
+                            "validation_acceptance_at_1_count": 1,
+                            "validation_acceptance_at_1_rate": 1.0,
+                            "validation_acceptance_at_k_count": 1,
+                            "validation_acceptance_at_k_rate": 1.0,
+                            "pass_at_1_count": 0,
+                            "pass_at_1_rate": 0.0,
+                            "pass_at_k_count": 0,
+                            "pass_at_k_rate": 0.0,
+                        },
+                        "query_metrics": [
+                            {
+                                "id": "q1",
+                                "validation_acceptance_at_1": True,
+                                "validation_acceptance_at_k": True,
+                                "pass_at_1": False,
+                                "pass_at_k": False,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (profile_dir / "hard_case_taxonomy.json").write_text(
+                json.dumps({"overview": {}}),
+                encoding="utf-8",
+            )
+
+            comparison = build_benchmark_comparison(
+                [{"name": "profile", "output_dir": str(profile_dir)}]
+            )
+
+            self.assertEqual(
+                comparison["profiles"][0]["validation_acceptance_at_1_count"],
+                1,
+            )
+            self.assertTrue(
+                comparison["query_comparison"][0]["profiles"]["profile"][
+                    "validation_acceptance_at_1"
+                ]
+            )
 
 
 if __name__ == "__main__":

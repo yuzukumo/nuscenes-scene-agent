@@ -25,6 +25,7 @@ PROFILE_MEAN_METRICS = [
     "mean_min_distance_error_m",
     "mean_min_ttc_error_s",
     "mean_progress_ratio",
+    "mean_raw_progress_ratio",
     "mean_closed_loop_score",
 ]
 
@@ -40,6 +41,7 @@ CASE_MEAN_METRICS = [
     "min_distance_error_m",
     "min_ttc_error_s",
     "progress_ratio",
+    "raw_progress_ratio",
     "closed_loop_score",
 ]
 
@@ -380,8 +382,8 @@ def _render_sweep_markdown(payload: Mapping[str, Any]) -> str:
             "",
             "## Overall Profile Leaderboard",
             "",
-            "| Profile | Cases | Full Horizon | Ego ADE | Ego FDE | Distance Error | TTC Error | Progress Ratio | Score |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| Profile | Cases | Full Horizon | Ego ADE | Ego FDE | Distance Error | TTC Error | Progress Ratio | Raw Progress Ratio | Closed-Loop Score |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     overall_rows = [row for row in payload.get("profile_leaderboard", []) if row.get("study_name") == "__overall__"]
@@ -394,6 +396,7 @@ def _render_sweep_markdown(payload: Mapping[str, Any]) -> str:
             f"`{_format_optional_float(row.get('mean_min_distance_error_m'))}` | "
             f"`{_format_optional_float(row.get('mean_min_ttc_error_s'))}` | "
             f"`{_format_optional_float(row.get('mean_progress_ratio'))}` | "
+            f"`{_format_optional_float(row.get('mean_raw_progress_ratio'))}` | "
             f"`{_format_optional_float(row.get('mean_closed_loop_score'))}` |"
         )
 

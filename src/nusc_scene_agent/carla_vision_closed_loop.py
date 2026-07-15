@@ -275,15 +275,33 @@ def _run_carla_vision_closed_loop_config(config: CarlaVisionClosedLoopConfig) ->
 
     server_process: Optional[subprocess.Popen[Any]] = None
     if config.auto_launch and not _can_connect_to_carla(carla, config.host, config.port, timeout_s=3.0):
-        server_process = _launch_carla_server(config)
-        _wait_for_carla(carla, config.host, config.port, timeout_s=config.launch_timeout_s)
+        try:
+            server_process = _launch_carla_server(config)
+            _wait_for_carla(
+                carla,
+                config.host,
+                config.port,
+                timeout_s=config.launch_timeout_s,
+                process=server_process,
+            )
+        except Exception:
+            if server_process is not None:
+                _terminate_carla_process(server_process)
+            raise
 
-    client = carla.Client(config.host, int(config.port))
-    client.set_timeout(max(float(config.rpc_timeout_s), 5.0))
-    world = _resolve_carla_world(client, config.town)
-    traffic_manager = _configure_traffic_manager(client, config)
-    map_name = str(world.get_map().name).rsplit("/", 1)[-1]
-    original_settings = world.get_settings()
+    try:
+        client = carla.Client(config.host, int(config.port))
+        startup_timeout_s = min(max(float(config.rpc_timeout_s), 5.0), 45.0)
+        client.set_timeout(startup_timeout_s)
+        world = _resolve_carla_world(client, config.town)
+        client.set_timeout(max(float(config.rpc_timeout_s), 5.0))
+        traffic_manager = _configure_traffic_manager(client, config)
+        map_name = str(world.get_map().name).rsplit("/", 1)[-1]
+        original_settings = world.get_settings()
+    except Exception:
+        if server_process is not None:
+            _terminate_carla_process(server_process)
+        raise
     try:
         _configure_carla_world(world, config)
         if scenario_specs:
@@ -581,7 +599,7 @@ def _run_carla_vision_scenario_in_world(
 
 
 def _load_bench2drive_planner(torch: Any, checkpoint_path: Path, device: Any) -> Tuple[Any, VisionE2EModelConfig]:
-    checkpoint = torch.load(str(checkpoint_path), map_location="cpu")
+    checkpoint = torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
     model_config = VisionE2EModelConfig(**dict(checkpoint.get("model_config") or {}))
     model = _build_vision_e2e_model(model_config)
     model.load_state_dict(checkpoint["model_state_dict"])
@@ -595,6 +613,7 @@ def _can_connect_to_carla(carla: Any, host: str, port: int, *, timeout_s: float)
         client = carla.Client(host, int(port))
         client.set_timeout(float(timeout_s))
         client.get_server_version()
+        client.get_world().get_map().name
         return True
     except Exception:
         return False
@@ -611,20 +630,28 @@ def _launch_carla_server(config: CarlaVisionClosedLoopConfig) -> subprocess.Pope
         fps=int(config.fps),
     )
     command.extend(["-stdout", "-FullStdOutLogOutput"])
+    launch_script = carla_root / "CarlaUE4.sh"
+    if not launch_script.exists():
+        raise FileNotFoundError(f"CARLA launch script not found: {launch_script}")
     env = os.environ.copy()
     if config.cuda_visible_devices:
         env["CUDA_VISIBLE_DEVICES"] = str(config.cuda_visible_devices)
     log_path = Path(config.output_dir) / "carla_server.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_handle = log_path.open("ab")
-    return subprocess.Popen(
-        command,
-        cwd=str(carla_root),
-        env=env,
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=str(carla_root),
+            env=env,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    finally:
+        log_handle.close()
+    setattr(process, "_nusc_scene_agent_log_path", log_path)
+    return process
 
 
 def _resolve_carla_world(client: Any, town: str) -> Any:
@@ -638,14 +665,30 @@ def _resolve_carla_world(client: Any, town: str) -> Any:
     return client.load_world(requested)
 
 
-def _wait_for_carla(carla: Any, host: str, port: int, *, timeout_s: float) -> None:
+def _wait_for_carla(
+    carla: Any,
+    host: str,
+    port: int,
+    *,
+    timeout_s: float,
+    process: Optional[subprocess.Popen[Any]] = None,
+) -> None:
     deadline = time.time() + float(timeout_s)
     last_error: Optional[Exception] = None
     while time.time() < deadline:
+        if process is not None and process.poll() is not None:
+            log_path = getattr(process, "_nusc_scene_agent_log_path", None)
+            log_tail = _read_carla_log_tail(Path(log_path)) if log_path else ""
+            detail = f"; log tail: {log_tail}" if log_tail else ""
+            raise RuntimeError(
+                f"CARLA server exited before becoming reachable "
+                f"(returncode={process.returncode}){detail}"
+            )
         try:
             client = carla.Client(host, int(port))
             client.set_timeout(5.0)
             client.get_server_version()
+            client.get_world().get_map().name
             return
         except Exception as exc:
             last_error = exc
@@ -667,6 +710,18 @@ def _terminate_carla_process(process: subprocess.Popen[Any]) -> None:
             os.killpg(process.pid, signal.SIGKILL)
         except Exception:
             process.kill()
+        try:
+            process.wait(timeout=5.0)
+        except Exception:
+            pass
+
+
+def _read_carla_log_tail(path: Path, *, max_bytes: int = 4096) -> str:
+    try:
+        data = Path(path).read_bytes()[-int(max_bytes) :]
+    except Exception:
+        return ""
+    return " ".join(data.decode("utf-8", errors="replace").split())
 
 
 def _configure_carla_world(world: Any, config: CarlaVisionClosedLoopConfig) -> None:
@@ -2825,6 +2880,7 @@ def _rollout_vision_planner(
                 )
             else:
                 safety_details = {"safety_brake": 0.0}
+            lane_guard_details = {"behavior_override": ""}
             if bool(config.enable_lane_departure_guard) and float(safety_details.get("safety_brake") or 0.0) <= 0.05:
                 control, lane_guard_details = _apply_lane_departure_guard(
                     carla=carla,
@@ -2838,6 +2894,9 @@ def _rollout_vision_planner(
                         **behavior_details,
                         "behavior_override": str(lane_guard_details.get("behavior_override") or ""),
                     }
+            lane_guard_active = bool(str(lane_guard_details.get("behavior_override") or ""))
+            if not bool(config.enable_lane_departure_guard):
+                lane_guard_details = {"behavior_override": ""}
             ego.apply_control(carla.VehicleControl(**control))
 
             yaw_rad = math.radians(float(transform.rotation.yaw))
@@ -2897,7 +2956,11 @@ def _rollout_vision_planner(
                 "brake_probability": brake_probability,
                 "command": float(command),
                 "ego_control_mode": str(control_details["ego_control_mode"]),
-                "direct_model_control_weight": float(control_details.get("direct_model_control_weight") or 1.0),
+                "model_waypoint_controller_weight": float(
+                    control_details.get("model_waypoint_controller_weight") or 0.0
+                ),
+                "network_control_blend_weight": float(control_details.get("network_control_blend_weight") or 0.0),
+                "control_source": str(control_details.get("control_source") or ""),
                 "pred_waypoint_count": int(prediction_stats["count"]),
                 "pred_path_length_m": float(prediction_stats["path_length_m"]),
                 "pred_final_forward_m": float(prediction_stats["final_forward_m"]),
@@ -2911,6 +2974,7 @@ def _rollout_vision_planner(
                 "safety_actor_role": str(safety_details.get("actor_role") or ""),
                 "safety_gap_m": float(safety_details.get("gap_m") or -1.0),
                 "safety_actor_distance_m": float(safety_details.get("distance_m") or -1.0),
+                "lane_guard_active": 1.0 if lane_guard_active else 0.0,
                 "traffic_light_conditioned": 1.0 if bool(traffic_light_details.get("enabled")) else 0.0,
                 "ego_route_traffic_light_id": int(traffic_light_details.get("selected_light_id") or -1),
                 "ego_route_traffic_light_group_size": int(traffic_light_details.get("group_size") or 0),
@@ -3274,7 +3338,13 @@ def _carla_control_from_prediction(
         control["throttle"] = max(float(control["throttle"]), 0.30)
     return control, {
         "target_speed_mps": target_speed,
-        "direct_model_control_weight": 1.0 if ego_control_mode in {"e2e_waypoint_control", "e2e_direct"} else 0.0,
+        "model_waypoint_controller_weight": 1.0 if ego_control_mode == "e2e_waypoint_control" else 0.0,
+        "network_control_blend_weight": 1.0 if len(pred_control) >= 3 else 0.0,
+        "control_source": (
+            "predicted_waypoints_to_pure_pursuit_plus_control_head"
+            if ego_control_mode == "e2e_waypoint_control"
+            else "control_head_speed_fallback"
+        ),
         "navigation_route_offset_m": 0.0,
         "ego_control_mode": ego_control_mode,
     }
@@ -3871,9 +3941,16 @@ def _summarize_carla_vision_control_attribution(
     direct_control_frames = sum(
         1 for row in states if str(row.get("ego_control_mode") or "") in {"e2e_waypoint_control", "e2e_direct"}
     )
+    model_waypoint_controller_frames = sum(
+        1 for row in states if float(row.get("model_waypoint_controller_weight") or 0.0) > 0.5
+    )
+    network_control_blend_frames = sum(
+        1 for row in states if float(row.get("network_control_blend_weight") or 0.0) > 0.5
+    )
+    lane_guard_frames = sum(1 for row in states if float(row.get("lane_guard_active") or 0.0) > 0.5)
     actor_specs = [dict(item) for item in list(runtime.metadata.get("actor_specs") or [])]
     closed_loop_mode = (
-        "vision_model_waypoint_control"
+        "vision_model_waypoint_to_pure_pursuit"
         if safety_frames == 0 and behavior_override_frames == 0 and navigation_offset_frames == 0
         else "vision_model_waypoint_control_with_safety_layer"
     )
@@ -3884,6 +3961,13 @@ def _summarize_carla_vision_control_attribution(
         "ego_uses_model_waypoints": direct_control_frames > 0,
         "ego_without_safety_override": safety_frames == 0,
         "frame_count": frame_count,
+        "model_waypoint_controller_frame_count": model_waypoint_controller_frames,
+        "model_waypoint_controller_ratio": model_waypoint_controller_frames / max(frame_count, 1),
+        "network_control_blend_frame_count": network_control_blend_frames,
+        "network_control_blend_ratio": network_control_blend_frames / max(frame_count, 1),
+        "lane_departure_guard_frame_count": lane_guard_frames,
+        "lane_departure_guard_ratio": lane_guard_frames / max(frame_count, 1),
+        "control_pipeline": "vision_model_waypoints -> pure_pursuit_vehicle_controller -> CARLA VehicleControl",
         "direct_model_control_frame_count": direct_control_frames,
         "direct_model_control_ratio": direct_control_frames / max(frame_count, 1),
         "behavior_override_frame_count": behavior_override_frames,
@@ -3908,6 +3992,7 @@ def _summarize_carla_vision_control_attribution(
             for spec in actor_specs
             if str(spec.get("kind") or "") == "walker" or str(spec.get("placement") or "") == "crosswalk"
         ),
+        "controlled_walker_count": sum(1 for spec in actor_specs if str(spec.get("kind") or "") == "walker"),
         "scenario_actor_count": len(actor_specs),
     }
 
@@ -3984,6 +4069,10 @@ def _write_states_csv(states: Sequence[Mapping[str, Any]], output_path: Path) ->
         "brake_probability",
         "command",
         "ego_control_mode",
+        "model_waypoint_controller_weight",
+        "network_control_blend_weight",
+        "control_source",
+        "lane_guard_active",
         "direct_model_control_weight",
         "pred_waypoint_count",
         "pred_path_length_m",
@@ -4266,8 +4355,10 @@ def _write_report_markdown(report: Mapping[str, Any], output_path: Path) -> None
         f"| Ego uses CARLA route-following controller | `{bool(attribution.get('ego_uses_map_route_tracking'))}` |",
         f"| Ego uses model-predicted waypoints | `{bool(attribution.get('ego_uses_model_waypoints'))}` |",
         f"| Ego without safety override | `{bool(attribution.get('ego_without_safety_override'))}` |",
-        f"| Model waypoint-control frames | `{int(attribution.get('direct_model_control_frame_count') or 0)}` |",
-        f"| Model waypoint-control ratio | `{float(attribution.get('direct_model_control_ratio') or 0.0):.3f}` |",
+        f"| Model waypoint-controller frames | `{int(attribution.get('model_waypoint_controller_frame_count') or 0)}` |",
+        f"| Model waypoint-controller ratio | `{float(attribution.get('model_waypoint_controller_ratio') or 0.0):.3f}` |",
+        f"| Network control-head blend ratio | `{float(attribution.get('network_control_blend_ratio') or 0.0):.3f}` |",
+        f"| Lane-departure guard frames | `{int(attribution.get('lane_departure_guard_frame_count') or 0)}` |",
         f"| Behavior override frames | `{int(attribution.get('behavior_override_frame_count') or 0)}` |",
         f"| Safety override frames | `{int(attribution.get('safety_override_frame_count') or 0)}` |",
         f"| Navigation offset frames | `{int(attribution.get('navigation_offset_frame_count') or 0)}` |",
@@ -4275,6 +4366,7 @@ def _write_report_markdown(report: Mapping[str, Any], output_path: Path) -> None
         f"| Traffic Manager vehicles | `{int(attribution.get('traffic_manager_vehicle_count') or 0)}` |",
         f"| Scripted vehicles | `{int(attribution.get('scripted_vehicle_count') or 0)}` |",
         f"| Crosswalk pedestrians | `{int(attribution.get('crosswalk_walker_count') or 0)}` |",
+        f"| Controlled pedestrians | `{int(attribution.get('controlled_walker_count') or 0)}` |",
         "",
     ]
     if media.get("gif_path"):
@@ -4368,7 +4460,7 @@ def _write_carla_vision_batch_markdown(summary: Mapping[str, Any], output_path: 
         f"- Scripted vehicles: `{int(aggregate.get('total_scripted_vehicles') or 0)}`",
         f"- Crosswalk pedestrians: `{int(aggregate.get('total_crosswalk_pedestrians') or 0)}`",
         "",
-        "| Scenario | Type | Frames | TM Vehicles | Scripted Vehicles | Pedestrians | Completion | Score | Collisions | Predicted Path | Min actor distance | MP4 |",
+        "| Scenario | Type | Frames | TM Vehicles | Scripted Vehicles | Pedestrians | Completion | Driving Score | Collisions | Predicted Path | Min actor distance | MP4 |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for row in list(summary.get("scenarios") or []):

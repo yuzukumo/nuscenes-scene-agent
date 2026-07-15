@@ -140,10 +140,11 @@ def build_hard_cases(case_library_entries: Sequence[Dict[str, object]], borderli
 
     for entry in case_library_entries:
         validation_score = float(entry["validation_score"])
+        validation_quality_score = float(entry.get("validation_quality_score", validation_score))
         query_hit_count = len(entry.get("source_query_ids", []))
         if not entry.get("passed"):
             difficulty_label = "failed"
-        elif validation_score < borderline_score:
+        elif validation_quality_score < borderline_score:
             difficulty_label = "borderline"
         elif query_hit_count > 1:
             difficulty_label = "shared"
@@ -152,7 +153,7 @@ def build_hard_cases(case_library_entries: Sequence[Dict[str, object]], borderli
 
         difficulty_score = round(
             (20.0 if difficulty_label == "failed" else 0.0)
-            + max(0.0, borderline_score - validation_score)
+            + max(0.0, borderline_score - validation_quality_score)
             + 2.0 * float(query_hit_count),
             2,
         )
@@ -164,6 +165,7 @@ def build_hard_cases(case_library_entries: Sequence[Dict[str, object]], borderli
             "location": entry["location"],
             "passed": bool(entry["passed"]),
             "validation_score": validation_score,
+            "validation_quality_score": validation_quality_score,
             "difficulty_label": difficulty_label,
             "difficulty_score": difficulty_score,
             "query_hit_count": query_hit_count,
@@ -187,7 +189,7 @@ def build_hard_cases(case_library_entries: Sequence[Dict[str, object]], borderli
         key=lambda item: (
             float(item["difficulty_score"]),
             int(item["query_hit_count"]),
-            -float(item["validation_score"]),
+            -float(item["validation_quality_score"]),
         ),
         reverse=True,
     )
@@ -513,7 +515,9 @@ def write_benchmark_exports(
         "# Benchmark Splits",
         "",
         "- Query count: {0}".format(query_splits["overview"]["query_count"]),
-        "- Pass@1 query ids: {0}".format(", ".join(query_splits["overview"]["pass_at_1_query_ids"]) or "none"),
+        "- Validation acceptance@1 query ids: {0}".format(
+            ", ".join(query_splits["overview"]["pass_at_1_query_ids"]) or "none"
+        ),
         "- Gap query ids: {0}".format(", ".join(query_splits["overview"]["gap_query_ids"]) or "none"),
         "",
         "## Behavior Splits",
@@ -555,7 +559,7 @@ def write_benchmark_exports(
         "",
         "- Count: {0}".format(len(hard_cases)),
         "",
-        "| Rank | Label | Taxonomy | Scene | Sample | Actor | Passed | Score | Query Hits | Queries |",
+        "| Rank | Label | Taxonomy | Scene | Sample | Actor | Passed | Quality | Query Hits | Queries |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for idx, entry in enumerate(hard_cases[:30], start=1):
@@ -568,7 +572,7 @@ def write_benchmark_exports(
                 entry["sample_idx"],
                 entry["category_name"],
                 entry["passed"],
-                entry["validation_score"],
+                entry["validation_quality_score"],
                 entry["query_hit_count"],
                 ", ".join(entry["source_query_ids"]),
             )
@@ -712,6 +716,8 @@ def write_benchmark_exports(
         "location",
         "passed",
         "validation_score",
+        "validation_quality_score",
+        "acceptance_score",
         "difficulty_label",
         "taxonomy_group",
         "taxonomy_label",

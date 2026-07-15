@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping
 
 
-BENCHMARK_REGISTRY_SCHEMA = "benchmark_registry_v1"
+BENCHMARK_CATALOG_SCHEMA = "benchmark_catalog_v1"
 
 
 @dataclass
@@ -25,7 +25,7 @@ class BenchmarkLayerSpec:
         return asdict(self)
 
 
-def build_default_benchmark_registry() -> Dict[str, Any]:
+def build_default_benchmark_catalog() -> Dict[str, Any]:
     layers = [
         BenchmarkLayerSpec(
             layer_id="scenario_mining",
@@ -35,7 +35,12 @@ def build_default_benchmark_registry() -> Dict[str, Any]:
             default_command="python -m nusc_scene_agent run-experiment-config --config configs/risk_benchmark_suite.yaml",
             inputs=["nuScenes SQLite index", "YAML query benchmark"],
             outputs=["scenario-mining YAML", "case_library.json", "benchmark metrics", "derived benchmark slices"],
-            metrics=["Pass@1", "Pass@K", "reference precision", "event localization"],
+            metrics=[
+                "validation acceptance@1",
+                "validation acceptance@K",
+                "reference consistency",
+                "event localization",
+            ],
         ),
         BenchmarkLayerSpec(
             layer_id="perception_slices",
@@ -80,19 +85,19 @@ def build_default_benchmark_registry() -> Dict[str, Any]:
         BenchmarkLayerSpec(
             layer_id="nuplan_closed_loop_replay",
             dataset="nuPlan",
-            task="closed-loop replay simulation",
-            description="Roll ego state forward with planner profiles while replaying logged actors and traffic-light context.",
+            task="ego-only replay simulation",
+            description="Roll ego state forward with planner profiles while replaying logged actor states and traffic-light context; other agents do not react to ego actions.",
             default_command="python -m nusc_scene_agent run-experiment-config --config configs/nuplan_closed_loop_sweep_medium.yaml",
             inputs=["nuPlan SQLite splits", "closed-loop planner profiles"],
             outputs=["closed-loop benchmarks", "closed-loop metrics", "cross-split leaderboard CSV", "case-study figures"],
-            metrics=["ego ADE", "progress ratio", "collision proxy mismatch", "comfort violation", "closed-loop score"],
+            metrics=["ego ADE", "progress ratio", "collision proxy mismatch", "comfort violation", "replay score"],
         ),
         BenchmarkLayerSpec(
             layer_id="bench2drive_vision_planner",
             dataset="Bench2Drive",
             task="multi-camera vision planning",
             description="Train and evaluate a supervised ego-trajectory planner from six camera views and route features.",
-            default_command="torchrun --standalone --nproc_per_node=8 -m nusc_scene_agent train-bench2drive-vision-planner --manifest artifacts/bench2drive/vision_e2e_manifest_tensor_160.jsonl --output outputs/bench2drive_vision_e2e_trajectory_transformer_final --epochs 24 --batch-size 64 --image-size 160 --model-size research --architecture trajectory_transformer --camera-pooling transformer --trajectory-modes 4 --trajectory-selection expected --trajectory-temperature 0.5 --dropout 0.05 --num-workers 4 --prefetch-factor 4 --precision fp16 --selection-metric risk_aware --brake-loss-weight 0.25 --brake-positive-weight 1.25 --risk-sample-weight 1.25 --lateral-loss-weight 2.0 --turn-sample-weight 2.0 --mode-classification-weight 0.05",
+            default_command="torchrun --standalone --nproc_per_node=8 -m nusc_scene_agent train-bench2drive-vision-planner --manifest artifacts/bench2drive/vision_e2e_manifest_tensor_160.jsonl --output outputs/bench2drive_vision_e2e_final --epochs 24 --batch-size 64 --image-size 160 --model-size research --architecture trajectory_transformer --camera-pooling transformer --trajectory-modes 4 --trajectory-selection expected --trajectory-temperature 0.5 --dropout 0.05 --num-workers 4 --prefetch-factor 4 --precision fp16 --selection-metric risk_aware --brake-loss-weight 0.25 --brake-positive-weight 1.25 --risk-sample-weight 1.25 --lateral-loss-weight 2.0 --turn-sample-weight 2.0 --selected-waypoint-loss-weight 0.5 --displacement-loss-weight 0.1 --endpoint-loss-weight 0.025 --path-length-loss-weight 0.025 --mode-classification-weight 0.05",
             inputs=["Bench2Drive Base1000 archives", "predecoded multi-camera tensor cache"],
             outputs=["training report", "planner checkpoint", "evaluation report", "prediction examples"],
             metrics=["ADE", "FDE", "control loss", "brake accuracy", "training throughput"],
@@ -104,7 +109,7 @@ def build_default_benchmark_registry() -> Dict[str, Any]:
             description="Roll a trained multi-camera vision planner forward with predicted-waypoint control and vehicle dynamics on Bench2Drive clips.",
             default_command="python -m nusc_scene_agent run-experiment-config --config configs/bench2drive_vision_closed_loop.yaml",
             inputs=["Bench2Drive tensor manifest", "vision planner checkpoint"],
-            outputs=["closed-loop report", "case metrics", "rollout figures", "rollout GIFs"],
+            outputs=["closed-loop report", "case metrics", "rollout figures", "optional per-case media"],
             metrics=["closed-loop ADE", "closed-loop FDE", "route completion", "lateral error", "closed-loop score"],
         ),
         BenchmarkLayerSpec(
@@ -125,13 +130,13 @@ def build_default_benchmark_registry() -> Dict[str, Any]:
         ),
     ]
     return {
-        "schema": BENCHMARK_REGISTRY_SCHEMA,
+        "schema": BENCHMARK_CATALOG_SCHEMA,
         "layers": {layer.layer_id: layer.to_dict() for layer in layers},
     }
 
 
-def write_benchmark_registry(output_path: Path, registry: Mapping[str, Any] | None = None) -> Dict[str, Any]:
-    payload = dict(registry or build_default_benchmark_registry())
+def write_benchmark_catalog(output_path: Path, catalog: Mapping[str, Any] | None = None) -> Dict[str, Any]:
+    payload = dict(catalog or build_default_benchmark_catalog())
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
